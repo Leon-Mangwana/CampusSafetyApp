@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment variables (contains secrets!)
+.env
+.env.local
+.env*.local
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Firebase service account keys
+*-firebase-adminsdk-*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*

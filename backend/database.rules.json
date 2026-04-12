@@ -1,0 +1,39 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".write": "auth != null && auth.uid === $uid",
+        "role": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        }
+      }
+    },
+    "incidents": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$incidentId": {
+        "status": {
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+        }
+      }
+    },
+    "sosAlerts": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+      ".write": "auth != null",
+      "$alertId": {
+        ".read": "auth != null && (data.child('userId').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+      }
+    },
+    "notifications": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null"
+      }
+    },
+    "stats": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+    }
+  }
+}

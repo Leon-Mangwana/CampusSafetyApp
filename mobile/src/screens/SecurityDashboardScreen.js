@@ -1,0 +1,229 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View, Text, FlatList, TouchableOpacity, StyleSheet,
+  RefreshControl, SafeAreaView, ScrollView,
+} from 'react-native';
+import { COLORS } from '../constants/theme';
+import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, resolveSOSAlert } from '../services/api';
+
+const StatusBadge = ({ status }) => {
+  const colors = {
+    pending: COLORS.warning,
+    active: COLORS.danger,
+    resolved: COLORS.success,
+    responded: COLORS.primary,
+    closed: COLORS.grey,
+  };
+  return (
+    <View style={[styles.badge, { backgroundColor: (colors[status] || COLORS.grey) + '20' }]}>
+      <Text style={[styles.badgeText, { color: colors[status] || COLORS.grey }]}>
+        {status?.charAt(0).toUpperCase() + status?.slice(1)}
+      </Text>
+    </View>
+  );
+};
+
+const SeverityBadge = ({ severity }) => {
+  const colors = { low: COLORS.severityLow, medium: COLORS.severityMedium, high: COLORS.severityHigh };
+  return (
+    <View style={[styles.badge, { backgroundColor: (colors[severity] || COLORS.grey) + '20' }]}>
+      <Text style={[styles.badgeText, { color: colors[severity] || COLORS.grey }]}>
+        {severity?.charAt(0).toUpperCase() + severity?.slice(1)}
+      </Text>
+    </View>
+  );
+};
+
+const SecurityDashboardScreen = () => {
+  const [stats, setStats] = useState({ total: 0, pending: 0, active: 0, resolved: 0 });
+  const [incidents, setIncidents] = useState([]);
+  const [sosAlerts, setSosAlerts] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    fetchAll();
+  }, []);
+
+  const fetchAll = async () => {
+    try {
+      const [statsData, incData, sosData] = await Promise.allSettled([
+        getIncidentStats(),
+        getIncidents({ limit: 20 }),
+        getSOSAlerts('active'),
+      ]);
+      if (statsData.status === 'fulfilled') setStats(statsData.value);
+      if (incData.status === 'fulfilled') setIncidents(incData.value.incidents || []);
+      if (sosData.status === 'fulfilled') setSosAlerts(sosData.value.alerts || []);
+    } catch {
+      // Demo data
+      setStats({ total: 47, pending: 12, active: 3, resolved: 32 });
+      setIncidents([
+        { incidentId: 'INC-047', type: 'theft', description: 'Library Block B', timestamp: new Date().toISOString(), severity: 'high', status: 'pending' },
+        { incidentId: 'INC-046', type: 'harassment', description: 'Parking Lot A', timestamp: new Date().toISOString(), severity: 'medium', status: 'active' },
+        { incidentId: 'INC-045', type: 'unauthorized_access', description: 'Science Building', timestamp: new Date().toISOString(), severity: 'high', status: 'resolved' },
+      ]);
+      setSosAlerts([
+        { alertId: 'SOS-003', userName: 'Student', latitude: -19.4515, longitude: 29.8140, status: 'active', timestamp: new Date(Date.now() - 120000).toISOString() },
+      ]);
+    }
+  };
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchAll();
+    setRefreshing(false);
+  }, []);
+
+  const handleStatusUpdate = async (incidentId, newStatus) => {
+    try {
+      await updateIncidentStatus(incidentId, newStatus);
+      await fetchAll();
+    } catch { /* ok */ }
+  };
+
+  const handleSOSRespond = async (alertId) => {
+    try {
+      await resolveSOSAlert(alertId, 'responded');
+      await fetchAll();
+    } catch { /* ok */ }
+  };
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Security Dashboard</Text>
+      </View>
+
+      <ScrollView
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentContainerStyle={styles.content}
+      >
+        {/* Stats Cards */}
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, { borderTopColor: COLORS.primary }]}>
+            <Text style={styles.statValue}>{stats.total}</Text>
+            <Text style={styles.statLabel}>Total</Text>
+          </View>
+          <View style={[styles.statCard, { borderTopColor: COLORS.warning }]}>
+            <Text style={styles.statValue}>{stats.pending}</Text>
+            <Text style={styles.statLabel}>Pending</Text>
+          </View>
+          <View style={[styles.statCard, { borderTopColor: COLORS.danger }]}>
+            <Text style={styles.statValue}>{sosAlerts.length}</Text>
+            <Text style={styles.statLabel}>Active SOS</Text>
+          </View>
+          <View style={[styles.statCard, { borderTopColor: COLORS.success }]}>
+            <Text style={styles.statValue}>{stats.resolved}</Text>
+            <Text style={styles.statLabel}>Resolved</Text>
+          </View>
+        </View>
+
+        {/* Active SOS Alerts */}
+        {sosAlerts.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>Active SOS Alerts</Text>
+            {sosAlerts.map((alert) => (
+              <View key={alert.alertId} style={styles.sosCard}>
+                <View style={styles.sosHeader}>
+                  <Text style={styles.sosId}>{alert.alertId}</Text>
+                  <StatusBadge status={alert.status} />
+                </View>
+                <Text style={styles.sosUser}>{alert.userName || 'Unknown'}</Text>
+                <Text style={styles.sosLocation}>
+                  Location: {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
+                </Text>
+                <TouchableOpacity
+                  style={styles.respondButton}
+                  onPress={() => handleSOSRespond(alert.alertId)}
+                >
+                  <Text style={styles.respondButtonText}>Respond</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </>
+        )}
+
+        {/* Recent Incidents */}
+        <Text style={styles.sectionTitle}>Recent Incident Reports</Text>
+        {incidents.map((inc) => (
+          <View key={inc.incidentId} style={styles.incidentCard}>
+            <View style={styles.incidentHeader}>
+              <Text style={styles.incidentType}>
+                {inc.type?.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+              </Text>
+              <SeverityBadge severity={inc.severity} />
+            </View>
+            <Text style={styles.incidentDesc} numberOfLines={2}>{inc.description}</Text>
+            <View style={styles.incidentFooter}>
+              <Text style={styles.incidentTime}>
+                {new Date(inc.timestamp).toLocaleString()}
+              </Text>
+              <StatusBadge status={inc.status} />
+            </View>
+            {inc.status === 'pending' && (
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={[styles.actionButton, { backgroundColor: COLORS.primary }]}
+                  onPress={() => handleStatusUpdate(inc.incidentId, 'active')}
+                >
+                  <Text style={styles.actionButtonText}>Accept</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionButton, { backgroundColor: COLORS.success }]}
+                  onPress={() => handleStatusUpdate(inc.incidentId, 'resolved')}
+                >
+                  <Text style={styles.actionButtonText}>Resolve</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.background },
+  header: { backgroundColor: COLORS.primaryDark, padding: 16, alignItems: 'center' },
+  headerTitle: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
+  content: { padding: 12, paddingBottom: 32 },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  statCard: {
+    flex: 1, backgroundColor: COLORS.white, borderRadius: 10,
+    padding: 12, marginHorizontal: 3, alignItems: 'center',
+    borderTopWidth: 3, elevation: 2,
+  },
+  statValue: { fontSize: 22, fontWeight: '700', color: COLORS.text },
+  statLabel: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text, marginTop: 8, marginBottom: 8 },
+  sosCard: {
+    backgroundColor: '#FFEBEE', borderRadius: 12, padding: 14,
+    marginBottom: 8, borderLeftWidth: 4, borderLeftColor: COLORS.danger,
+  },
+  sosHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  sosId: { fontSize: 14, fontWeight: '700', color: COLORS.danger },
+  sosUser: { fontSize: 14, color: COLORS.text, marginTop: 4 },
+  sosLocation: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  respondButton: {
+    backgroundColor: COLORS.danger, borderRadius: 6,
+    padding: 10, alignItems: 'center', marginTop: 8,
+  },
+  respondButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
+  incidentCard: {
+    backgroundColor: COLORS.white, borderRadius: 12,
+    padding: 14, marginBottom: 8, elevation: 1,
+  },
+  incidentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  incidentType: { fontSize: 15, fontWeight: '600', color: COLORS.text },
+  incidentDesc: { fontSize: 13, color: COLORS.textSecondary, marginTop: 6 },
+  incidentFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
+  incidentTime: { fontSize: 12, color: COLORS.grey },
+  actionRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10, gap: 8 },
+  actionButton: { borderRadius: 6, paddingVertical: 8, paddingHorizontal: 16 },
+  actionButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 13 },
+  badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
+  badgeText: { fontSize: 11, fontWeight: '600' },
+});
+
+export default SecurityDashboardScreen;
