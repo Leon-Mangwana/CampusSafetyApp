@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Alert,
-  Animated, SafeAreaView, Vibration,
+  Animated, SafeAreaView, Vibration, Linking,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { COLORS } from '../constants/theme';
@@ -105,6 +105,18 @@ const SOSScreen = ({ navigation }) => {
     }
   };
 
+  const callSecurity = () => {
+    Linking.openURL('tel:+263542260404').catch(() => {
+      Alert.alert('Error', 'Unable to make a call from this device.');
+    });
+  };
+
+  const callPolice = () => {
+    Linking.openURL('tel:995').catch(() => {
+      Alert.alert('Error', 'Unable to make a call from this device.');
+    });
+  };
+
   const handleCancel = () => {
     Alert.alert('Cancel SOS', 'Are you sure you want to cancel the SOS alert?', [
       { text: 'No', style: 'cancel' },
@@ -145,6 +157,17 @@ const SOSScreen = ({ navigation }) => {
               Emergency Contact: {user?.emergencyContact || 'Not set'}
             </Text>
           </View>
+        </View>
+
+        <View style={styles.callButtonsRow}>
+          <TouchableOpacity style={styles.callSecurityBtn} onPress={callSecurity}>
+            <Text style={styles.callBtnText}>Call Security</Text>
+            <Text style={styles.callBtnNumber}>054 226 0404</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.callPoliceBtn} onPress={callPolice}>
+            <Text style={styles.callBtnText}>Call Police</Text>
+            <Text style={styles.callBtnNumber}>995</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.coordsText}>
@@ -190,6 +213,17 @@ const SOSScreen = ({ navigation }) => {
           <Text style={styles.destinationText}>
             Emergency Contact: {user?.emergencyContact || '+263 7X XXX XXXX'}
           </Text>
+        </View>
+
+        <View style={styles.callButtonsRow}>
+          <TouchableOpacity style={styles.callSecurityBtnInactive} onPress={callSecurity}>
+            <Text style={styles.callBtnTextDark}>Call Security</Text>
+            <Text style={styles.callBtnNumberDark}>054 226 0404</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.callPoliceBtnInactive} onPress={callPolice}>
+            <Text style={styles.callBtnTextDark}>Call Police</Text>
+            <Text style={styles.callBtnNumberDark}>995</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.gpsInfo}>
@@ -262,6 +296,54 @@ const styles = StyleSheet.create({
     padding: 14, marginHorizontal: 40, marginTop: 24, alignItems: 'center',
   },
   cancelButtonText: { color: COLORS.white, fontSize: 16, fontWeight: '600' },
+  // Call buttons (active SOS)
+  callButtonsRow: {
+    flexDirection: 'row',
+    marginHorizontal: 24,
+    marginTop: 16,
+    gap: 12,
+  },
+  callSecurityBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  callPoliceBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  callBtnText: { color: COLORS.white, fontSize: 14, fontWeight: '700' },
+  callBtnNumber: { color: 'rgba(255,255,255,0.8)', fontSize: 13, marginTop: 2 },
+  // Call buttons (inactive / pre-SOS)
+  callSecurityBtnInactive: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.danger,
+  },
+  callPoliceBtnInactive: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  callBtnTextDark: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  callBtnNumberDark: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
 });
 
 export default SOSScreen;

@@ -18,6 +18,7 @@ import NotificationsScreen from '../screens/NotificationsScreen';
 import SafetyStatsScreen from '../screens/SafetyStatsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import SecurityDashboardScreen from '../screens/SecurityDashboardScreen';
+import EmergencyContactsScreen from '../screens/EmergencyContactsScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -116,6 +117,7 @@ function AppStack() {
       <Stack.Screen name="MainTabs" component={MainTabs} />
       <Stack.Screen name="ReportIncident" component={ReportIncidentScreen} />
       <Stack.Screen name="SOS" component={SOSScreen} />
+      <Stack.Screen name="EmergencyContacts" component={EmergencyContactsScreen} />
       <Stack.Screen name="SafetyStats" component={SafetyStatsScreen} />
       {isSecurityOrAdmin && (
         <Stack.Screen name="SecurityDashboard" component={SecurityDashboardScreen} />

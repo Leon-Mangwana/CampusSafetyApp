@@ -64,17 +64,27 @@ const HomeScreen = ({ navigation }) => {
 
         <View style={styles.row}>
           <MenuTile
+            title="Emergency Numbers"
+            icon="&#x1F4DE;"
+            color="#C62828"
+            onPress={() => navigation.navigate('EmergencyContacts')}
+          />
+          <MenuTile
             title="Safety Stats"
             icon="&#x1F4CA;"
             color={COLORS.success}
             onPress={() => navigation.navigate('SafetyStats')}
           />
+        </View>
+
+        <View style={styles.row}>
           <MenuTile
             title="Settings"
             icon="&#x2699;"
             color="#546E7A"
             onPress={() => navigation.navigate('Settings')}
           />
+          <View style={{ flex: 1, marginHorizontal: 6 }} />
         </View>
 
         {(user?.role === 'security' || user?.role === 'admin') && (
