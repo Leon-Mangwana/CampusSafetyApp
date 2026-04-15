@@ -3,10 +3,14 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator,
 } from 'react-native';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../services/firebase';
 import { COLORS } from '../constants/theme';
-import { registerUser } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { registerUser, getProfile } from '../services/api';
 
 const RegisterScreen = ({ navigation }) => {
+  const { signIn } = useAuth();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -38,10 +42,23 @@ const RegisterScreen = ({ navigation }) => {
 
     setLoading(true);
     try {
+      // Create user on the backend (Firebase Auth + database)
       await registerUser({ email, password, fullName, phone, emergencyContact, role: 'student' });
-      Alert.alert('Success', 'Account created! You can now sign in.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+
+      // Automatically sign in with Firebase Auth
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const idToken = await userCredential.user.getIdToken();
+
+      const userData = {
+        uid: userCredential.user.uid,
+        email,
+        fullName,
+        role: 'student',
+        phone,
+        emergencyContact,
+      };
+
+      await signIn(idToken, userData);
     } catch (error) {
       Alert.alert('Registration Failed', error.message || 'Please try again.');
     } finally {

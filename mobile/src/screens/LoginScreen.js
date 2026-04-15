@@ -3,18 +3,11 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator,
 } from 'react-native';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../services/firebase';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
-
-// Simulated Firebase Auth sign-in (replace with real Firebase SDK in production)
-const firebaseSignIn = async (email, password) => {
-  // In production, use: import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-  // For now, we call the backend and simulate token generation
-  const response = await fetch('http://localhost:3000/api/auth/profile', {
-    headers: { Authorization: `Bearer simulated-token-${Date.now()}` },
-  });
-  return { token: `firebase-token-${Date.now()}`, uid: `user-${Date.now()}` };
-};
+import { getProfile } from '../services/api';
 
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
@@ -35,22 +28,47 @@ const LoginScreen = ({ navigation }) => {
 
     setLoading(true);
     try {
-      // In production, use Firebase Auth SDK:
-      // const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      // const token = await userCredential.user.getIdToken();
+      // Sign in with Firebase Auth
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const idToken = await userCredential.user.getIdToken();
 
-      // Simulated sign in
-      const userData = {
-        uid: `user-${Date.now()}`,
-        email,
-        fullName: email.split('@')[0],
-        role: 'student',
-      };
-      const token = `simulated-token-${Date.now()}`;
+      // Fetch the user profile from the backend using the real token
+      // Store token first so apiRequest can use it
+      const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
+      await AsyncStorage.setItem('userToken', idToken);
 
-      await signIn(token, userData);
+      let userData;
+      try {
+        const profile = await getProfile();
+        userData = {
+          uid: userCredential.user.uid,
+          email: userCredential.user.email,
+          fullName: profile.fullName || userCredential.user.displayName || email.split('@')[0],
+          role: profile.role || 'student',
+          phone: profile.phone || '',
+          emergencyContact: profile.emergencyContact || '',
+        };
+      } catch {
+        // If profile fetch fails, use basic Firebase data
+        userData = {
+          uid: userCredential.user.uid,
+          email: userCredential.user.email,
+          fullName: userCredential.user.displayName || email.split('@')[0],
+          role: 'student',
+        };
+      }
+
+      await signIn(idToken, userData);
     } catch (error) {
-      Alert.alert('Login Failed', error.message || 'Invalid email or password.');
+      let message = 'Invalid email or password.';
+      if (error.code === 'auth/user-not-found') {
+        message = 'No account found with this email. Please register first.';
+      } else if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        message = 'Incorrect password. Please try again.';
+      } else if (error.code === 'auth/too-many-requests') {
+        message = 'Too many failed attempts. Please try again later.';
+      }
+      Alert.alert('Login Failed', message);
     } finally {
       setLoading(false);
     }
