@@ -1,6 +1,6 @@
 // Firebase web config
 export const FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyDgqFR6oC8ey0o8Z5nuueY2M_DTG',
+  apiKey: 'AIzaSyDgQ8F0Uq6CRSwyecABZHsuuxppYZM_DTQ',
   authDomain: 'campus-safety-app-a4936.firebaseapp.com',
   databaseURL: 'https://campus-safety-app-a4936-default-rtdb.firebaseio.com',
   projectId: 'campus-safety-app-a4936',
@@ -10,4 +10,4 @@ export const FIREBASE_CONFIG = {
 };
 
 // Backend API URL — change to your deployed URL in production
-export const API_BASE_URL = 'http://192.168.1.215:3000/api';
+export const API_BASE_URL = 'http://10.45.223.226:3000/api';
