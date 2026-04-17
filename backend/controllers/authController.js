@@ -8,10 +8,9 @@ const register = async (req, res) => {
   try {
     const { email, password, fullName, phone, emergencyContact, role } = req.body;
 
-    // Validate MSU email domain
-    if (!email || !email.endsWith('.msu.ac.zw')) {
+    if (!email) {
       return res.status(400).json({
-        error: 'Registration requires a valid Midlands State University email address.',
+        error: 'A valid email address is required.',
       });
     }
 

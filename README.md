@@ -1,6 +1,6 @@
-# Crowdsourced Campus Safety Application
+# Campus Safety Application
 
-A cross-platform mobile application for Midlands State University (MSU) campus safety, enabling crowdsourced incident reporting, real-time heatmap visualization, SOS alerts, and security officer dashboards.
+A cross-platform mobile application for university campus safety, enabling crowdsourced incident reporting, real-time heatmap visualization, SOS alerts, and security officer dashboards.
 
 ## Project Structure
 
@@ -20,19 +20,21 @@ CampusSafetyApp/
 │   │   ├── context/     # AuthContext (authentication state)
 │   │   ├── navigation/  # React Navigation setup
 │   │   ├── screens/     # All app screens
-│   │   └── services/    # API client layer
+│   │   └── services/    # API client layer, Firebase init
 │   └── App.js           # Entry point
 └── README.md
 ```
 
 ## Features
 
-- **Anonymous Incident Reporting** — Submit reports within 60 seconds with GPS auto-detection
+- **Incident Reporting** — Submit reports with GPS auto-detection
 - **Real-Time Heatmap** — Google Maps overlay showing incident density by severity
 - **SOS Alert System** — Hold-to-activate emergency alert with live GPS tracking to security
+- **Emergency Contacts** — Quick-dial emergency numbers for campus security, police, and support services
 - **Push Notifications** — Real-time alerts for nearby high-severity incidents
 - **Security Dashboard** — Officer view for managing incidents and responding to SOS alerts
 - **Safety Statistics** — Analytics on incident types, severity distribution, and hotspots
+- **Password Reset** — Firebase-powered forgot password flow
 - **Role-Based Access** — Student, staff, security, and admin roles
 
 ## Prerequisites
@@ -65,13 +67,7 @@ CampusSafetyApp/
    - `JWT_SECRET` — any strong random string
    - `GOOGLE_MAPS_API_KEY` — from Google Cloud Console
 
-4. Deploy Firebase security rules:
-   ```bash
-   firebase deploy --only database --project YOUR_PROJECT_ID
-   ```
-   Or manually paste `database.rules.json` into Firebase Console > Realtime Database > Rules.
-
-5. Start the server:
+4. Start the server:
    ```bash
    npm run dev    # development with auto-reload
    npm start      # production
@@ -100,41 +96,6 @@ CampusSafetyApp/
    - **Android**: Press `a` to open in Android emulator, or scan QR code with Expo Go
    - **iOS**: Press `i` to open in iOS simulator, or scan QR code with Expo Go
 
-## API Endpoints
-
-| Method | Endpoint                        | Auth | Description                    |
-|--------|---------------------------------|------|--------------------------------|
-| POST   | /api/auth/register              | No   | Register new user              |
-| GET    | /api/auth/profile               | Yes  | Get user profile               |
-| PUT    | /api/auth/profile               | Yes  | Update profile                 |
-| PUT    | /api/auth/fcm-token             | Yes  | Update push notification token |
-| PUT    | /api/auth/location              | Yes  | Update user GPS location       |
-| POST   | /api/incidents                  | Yes  | Submit incident report         |
-| GET    | /api/incidents                  | Yes  | List incidents (with filters)  |
-| GET    | /api/incidents/heatmap          | Yes  | Get heatmap data points        |
-| GET    | /api/incidents/stats            | Yes* | Get incident statistics        |
-| GET    | /api/incidents/:id              | Yes  | Get incident details           |
-| PUT    | /api/incidents/:id/status       | Yes* | Update incident status         |
-| POST   | /api/sos                        | Yes  | Trigger SOS alert              |
-| PUT    | /api/sos/:alertId/location      | Yes  | Update SOS live location       |
-| PUT    | /api/sos/:alertId/resolve       | Yes* | Resolve SOS alert              |
-| PUT    | /api/sos/:alertId/cancel        | Yes  | Cancel own SOS alert           |
-| GET    | /api/sos                        | Yes* | List active SOS alerts         |
-| GET    | /api/notifications              | Yes  | Get user notifications         |
-| PUT    | /api/notifications/:id/read     | Yes  | Mark notification as read      |
-| PUT    | /api/notifications/read-all     | Yes  | Mark all as read               |
-
-*Requires security or admin role
-
-## User Roles
-
-| Role     | Capabilities                                              |
-|----------|-----------------------------------------------------------|
-| student  | Report incidents, trigger SOS, view heatmap & stats       |
-| staff    | Same as student                                           |
-| security | All student abilities + manage incidents, respond to SOS  |
-| admin    | All security abilities + manage user roles                |
-
 ## Tech Stack
 
 - **Frontend**: React Native, Expo, React Navigation 7
@@ -145,12 +106,6 @@ CampusSafetyApp/
 - **Maps**: react-native-maps (Google Maps)
 - **Location**: expo-location
 
-## MSU Campus Coordinates
-
-- Latitude: -19.4519
-- Longitude: 29.8146
-- Default zoom: 0.01 lat/lng delta
-
 ## License
 
-This project was developed as part of an academic project at Midlands State University, Zimbabwe.
+This project is open source and available for academic and educational purposes.
