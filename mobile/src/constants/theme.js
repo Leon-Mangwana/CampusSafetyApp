@@ -50,10 +50,10 @@ export const SEVERITY_LEVELS = [
   { label: 'High', value: 'high', color: COLORS.severityHigh },
 ];
 
-// MSU Campus center coordinates (Gweru, Zimbabwe)
-export const MSU_CAMPUS = {
-  latitude: -19.4519,
-  longitude: 29.8146,
+// Default campus center coordinates (can be overridden per university)
+export const DEFAULT_CAMPUS = {
+  latitude: 0,
+  longitude: 0,
   latitudeDelta: 0.01,
   longitudeDelta: 0.01,
 };

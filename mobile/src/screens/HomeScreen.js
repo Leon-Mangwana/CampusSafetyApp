@@ -22,9 +22,9 @@ const HomeScreen = ({ navigation }) => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Crowdsourced Campus Safety</Text>
+        <Text style={styles.headerTitle}>Campus Safety</Text>
         <View style={styles.campusBadge}>
-          <Text style={styles.campusBadgeText}>MSU Campus Safety</Text>
+          <Text style={styles.campusBadgeText}>University Campus Safety</Text>
         </View>
         <Text style={styles.welcomeText}>
           Welcome, {user?.fullName || 'Student'}

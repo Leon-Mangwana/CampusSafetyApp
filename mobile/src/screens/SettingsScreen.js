@@ -110,8 +110,8 @@ const SettingsScreen = ({ navigation }) => {
         {/* About */}
         <Text style={styles.sectionTitle}>About</Text>
         <View style={styles.card}>
-          <Text style={styles.aboutText}>Crowdsourced Campus Safety Application</Text>
-          <Text style={styles.aboutSubtext}>Midlands State University</Text>
+          <Text style={styles.aboutText}>Campus Safety Application</Text>
+          <Text style={styles.aboutSubtext}>University Campus Safety</Text>
           <Text style={styles.aboutVersion}>Version 1.0.0</Text>
         </View>
 

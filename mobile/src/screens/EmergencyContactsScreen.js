@@ -9,31 +9,24 @@ const EMERGENCY_CONTACTS = [
   {
     category: 'Campus Security',
     contacts: [
-      { name: 'MSU Security Control Room', number: '+263542260404', display: '054 226 0404' },
-      { name: 'MSU Security (Mobile)', number: '+263772123456', display: '0772 123 456' },
+      { name: 'Campus Security Control Room', number: '911', display: '911' },
+      { name: 'Campus Security (Mobile)', number: '911', display: '911' },
     ],
   },
   {
     category: 'National Emergency',
     contacts: [
-      { name: 'Zimbabwe Police (ZRP)', number: '995', display: '995' },
-      { name: 'Ambulance / Medical', number: '994', display: '994' },
-      { name: 'Fire Brigade', number: '993', display: '993' },
+      { name: 'Police', number: '911', display: '911' },
+      { name: 'Ambulance / Medical', number: '911', display: '911' },
+      { name: 'Fire Department', number: '911', display: '911' },
     ],
   },
   {
-    category: 'Gweru Local Services',
+    category: 'University Support Services',
     contacts: [
-      { name: 'Gweru Central Police Station', number: '+263542252211', display: '054 225 2211' },
-      { name: 'Gweru Provincial Hospital', number: '+263542252481', display: '054 225 2481' },
-    ],
-  },
-  {
-    category: 'MSU Support Services',
-    contacts: [
-      { name: 'Student Affairs Office', number: '+263542260648', display: '054 226 0648' },
-      { name: 'MSU Clinic', number: '+263542260404', display: '054 226 0404' },
-      { name: 'Gender-Based Violence Hotline', number: '+263714020057', display: '0714 020 057' },
+      { name: 'Student Affairs Office', number: '911', display: 'Contact your university' },
+      { name: 'University Health Center', number: '911', display: 'Contact your university' },
+      { name: 'Counseling Services', number: '911', display: 'Contact your university' },
     ],
   },
 ];

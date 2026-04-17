@@ -48,7 +48,7 @@ const NotificationsScreen = () => {
           timestamp: new Date(Date.now() - 3600000).toISOString(), isRead: false,
         },
         {
-          notificationId: '3', type: 'system', message: 'Welcome to MSU Campus Safety App!',
+          notificationId: '3', type: 'system', message: 'Welcome to Campus Safety App!',
           timestamp: new Date(Date.now() - 86400000).toISOString(), isRead: true,
         },
       ]);

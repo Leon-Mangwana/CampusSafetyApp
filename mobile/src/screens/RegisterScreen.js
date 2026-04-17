@@ -25,11 +25,6 @@ const RegisterScreen = ({ navigation }) => {
       return;
     }
 
-    if (!email.endsWith('.msu.ac.zw')) {
-      Alert.alert('Error', 'Please use a valid MSU email (e.g. R242441H@students.msu.ac.zw).');
-      return;
-    }
-
     if (password.length < 6) {
       Alert.alert('Error', 'Password must be at least 6 characters.');
       return;
@@ -74,7 +69,7 @@ const RegisterScreen = ({ navigation }) => {
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Join the MSU Campus Safety community</Text>
+          <Text style={styles.subtitle}>Join the Campus Safety community</Text>
         </View>
 
         <View style={styles.form}>
@@ -90,7 +85,7 @@ const RegisterScreen = ({ navigation }) => {
           <Text style={styles.label}>University Email *</Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g. R242441H@students.msu.ac.zw"
+            placeholder="e.g. student@university.ac.zw"
             placeholderTextColor={COLORS.grey}
             value={email}
             onChangeText={setEmail}

@@ -18,11 +18,6 @@ const ForgotPasswordScreen = ({ navigation }) => {
       return;
     }
 
-    if (!email.endsWith('.msu.ac.zw')) {
-      Alert.alert('Error', 'Please use your MSU email address.');
-      return;
-    }
-
     setLoading(true);
     try {
       await sendPasswordResetEmail(auth, email);
@@ -92,7 +87,7 @@ const ForgotPasswordScreen = ({ navigation }) => {
         <View style={styles.header}>
           <Text style={styles.title}>Forgot Password?</Text>
           <Text style={styles.subtitle}>
-            Enter your MSU email address and we'll send you a link to reset your password.
+            Enter your email address and we'll send you a link to reset your password.
           </Text>
         </View>
 
@@ -100,7 +95,7 @@ const ForgotPasswordScreen = ({ navigation }) => {
           <Text style={styles.label}>University Email</Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g. R242441H@students.msu.ac.zw"
+            placeholder="e.g. student@university.ac.zw"
             placeholderTextColor={COLORS.grey}
             value={email}
             onChangeText={setEmail}

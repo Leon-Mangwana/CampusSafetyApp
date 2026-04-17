@@ -106,13 +106,13 @@ const SOSScreen = ({ navigation }) => {
   };
 
   const callSecurity = () => {
-    Linking.openURL('tel:+263542260404').catch(() => {
+    Linking.openURL('tel:911').catch(() => {
       Alert.alert('Error', 'Unable to make a call from this device.');
     });
   };
 
   const callPolice = () => {
-    Linking.openURL('tel:995').catch(() => {
+    Linking.openURL('tel:911').catch(() => {
       Alert.alert('Error', 'Unable to make a call from this device.');
     });
   };
@@ -150,7 +150,7 @@ const SOSScreen = ({ navigation }) => {
         <View style={styles.infoBox}>
           <Text style={styles.infoText}>Your real-time location is being shared with:</Text>
           <View style={styles.contactRow}>
-            <Text style={styles.contactLabel}>MSU Campus Security Control Room</Text>
+            <Text style={styles.contactLabel}>Campus Security Control Room</Text>
           </View>
           <View style={styles.contactRow}>
             <Text style={styles.contactLabel}>
@@ -162,11 +162,11 @@ const SOSScreen = ({ navigation }) => {
         <View style={styles.callButtonsRow}>
           <TouchableOpacity style={styles.callSecurityBtn} onPress={callSecurity}>
             <Text style={styles.callBtnText}>Call Security</Text>
-            <Text style={styles.callBtnNumber}>054 226 0404</Text>
+            <Text style={styles.callBtnNumber}>911</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.callPoliceBtn} onPress={callPolice}>
             <Text style={styles.callBtnText}>Call Police</Text>
-            <Text style={styles.callBtnNumber}>995</Text>
+            <Text style={styles.callBtnNumber}>911</Text>
           </TouchableOpacity>
         </View>
 
@@ -207,7 +207,7 @@ const SOSScreen = ({ navigation }) => {
 
         <Text style={styles.sendToLabel}>Your real-time location will be sent to:</Text>
         <View style={styles.destinationBox}>
-          <Text style={styles.destinationText}>MSU Campus Security Control Room</Text>
+          <Text style={styles.destinationText}>Campus Security Control Room</Text>
         </View>
         <View style={styles.destinationBox}>
           <Text style={styles.destinationText}>
@@ -218,11 +218,11 @@ const SOSScreen = ({ navigation }) => {
         <View style={styles.callButtonsRow}>
           <TouchableOpacity style={styles.callSecurityBtnInactive} onPress={callSecurity}>
             <Text style={styles.callBtnTextDark}>Call Security</Text>
-            <Text style={styles.callBtnNumberDark}>054 226 0404</Text>
+            <Text style={styles.callBtnNumberDark}>911</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.callPoliceBtnInactive} onPress={callPolice}>
             <Text style={styles.callBtnTextDark}>Call Police</Text>
-            <Text style={styles.callBtnNumberDark}>995</Text>
+            <Text style={styles.callBtnNumberDark}>911</Text>
           </TouchableOpacity>
         </View>
 

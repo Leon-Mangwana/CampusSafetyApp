@@ -21,11 +21,6 @@ const LoginScreen = ({ navigation }) => {
       return;
     }
 
-    if (!email.endsWith('.msu.ac.zw')) {
-      Alert.alert('Error', 'Please use your MSU email address.');
-      return;
-    }
-
     setLoading(true);
     try {
       // Sign in with Firebase Auth
@@ -82,7 +77,7 @@ const LoginScreen = ({ navigation }) => {
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <View style={styles.logoBadge}>
-            <Text style={styles.logoText}>MSU</Text>
+            <Text style={styles.logoText}>Campus Safety</Text>
           </View>
           <Text style={styles.title}>Welcome Back</Text>
           <Text style={styles.subtitle}>Sign in with your university email</Text>
@@ -92,7 +87,7 @@ const LoginScreen = ({ navigation }) => {
           <Text style={styles.label}>University Email</Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g. R242441H@students.msu.ac.zw"
+            placeholder="e.g. student@university.ac.zw"
             placeholderTextColor={COLORS.grey}
             value={email}
             onChangeText={setEmail}

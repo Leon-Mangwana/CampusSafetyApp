@@ -3,7 +3,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Dimensions,
 } from 'react-native';
 import MapView, { Circle, Marker } from 'react-native-maps';
-import { COLORS, MSU_CAMPUS } from '../constants/theme';
+import * as Location from 'expo-location';
+import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getHeatmapData } from '../services/api';
 
 const FILTERS = [
@@ -25,10 +26,30 @@ const HeatmapScreen = () => {
   const [activeFilter, setActiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
+  const [region, setRegion] = useState(DEFAULT_CAMPUS);
+
+  useEffect(() => {
+    getUserLocation();
+  }, []);
 
   useEffect(() => {
     fetchData();
   }, [activeFilter]);
+
+  const getUserLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({});
+        setRegion({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        });
+      }
+    } catch { /* use default */ }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -38,12 +59,14 @@ const HeatmapScreen = () => {
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
       // Use demo data if API is unavailable
+      const lat = region.latitude || 0;
+      const lng = region.longitude || 0;
       setDataPoints([
-        { latitude: -19.4515, longitude: 29.8140, weight: 3, type: 'theft', severity: 'high' },
-        { latitude: -19.4525, longitude: 29.8155, weight: 2, type: 'harassment', severity: 'medium' },
-        { latitude: -19.4510, longitude: 29.8160, weight: 1, type: 'vandalism', severity: 'low' },
-        { latitude: -19.4530, longitude: 29.8135, weight: 3, type: 'assault', severity: 'high' },
-        { latitude: -19.4520, longitude: 29.8150, weight: 2, type: 'theft', severity: 'medium' },
+        { latitude: lat + 0.0004, longitude: lng - 0.0006, weight: 3, type: 'theft', severity: 'high' },
+        { latitude: lat - 0.0006, longitude: lng + 0.0009, weight: 2, type: 'harassment', severity: 'medium' },
+        { latitude: lat + 0.0009, longitude: lng + 0.0014, weight: 1, type: 'vandalism', severity: 'low' },
+        { latitude: lat - 0.0011, longitude: lng - 0.0011, weight: 3, type: 'assault', severity: 'high' },
+        { latitude: lat - 0.0001, longitude: lng + 0.0004, weight: 2, type: 'theft', severity: 'medium' },
       ]);
       setLastUpdated(new Date().toLocaleTimeString());
     } finally {
@@ -60,7 +83,7 @@ const HeatmapScreen = () => {
       <View style={styles.mapContainer}>
         <MapView
           style={styles.map}
-          initialRegion={MSU_CAMPUS}
+          initialRegion={region}
           showsUserLocation
           showsMyLocationButton
         >
