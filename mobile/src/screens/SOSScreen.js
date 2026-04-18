@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Alert,
-  Animated, SafeAreaView, Vibration, Linking,
+  View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView,
+  Animated, SafeAreaView, Vibration, Linking, Platform,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { COLORS } from '../constants/theme';
@@ -89,6 +89,28 @@ const SOSScreen = ({ navigation }) => {
     }
   };
 
+  const openSmsToContacts = async (lat, lng) => {
+    const contacts = Array.isArray(user?.emergencyContacts) ? user.emergencyContacts : [];
+    if (contacts.length === 0) return;
+
+    const phones = contacts.map((c) => c.phone).filter(Boolean);
+    if (phones.length === 0) return;
+
+    const body = encodeURIComponent(
+      `EMERGENCY SOS from ${user?.fullName || 'a Campus Safety user'}. ` +
+      `Live location: https://maps.google.com/?q=${lat},${lng}`
+    );
+
+    // iOS uses '&', Android uses ','; the separator lets one tap message all contacts.
+    const separator = Platform.OS === 'ios' ? '&' : ',';
+    const url = `sms:${phones.join(separator)}${Platform.OS === 'ios' ? '&' : '?'}body=${body}`;
+
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) await Linking.openURL(url);
+    } catch { /* ignore — backend still logs */ }
+  };
+
   const activateSOS = async () => {
     Vibration.vibrate([200, 100, 200]);
     setIsActive(true);
@@ -98,7 +120,11 @@ const SOSScreen = ({ navigation }) => {
       const lat = location?.latitude || -19.4519;
       const lng = location?.longitude || 29.8146;
 
-      const result = await triggerSOS(lat, lng);
+      // Fire backend alert and SMS deep-link in parallel for lowest latency.
+      const [result] = await Promise.all([
+        triggerSOS(lat, lng),
+        openSmsToContacts(lat, lng),
+      ]);
       setAlertId(result.alertId);
     } catch (error) {
       Alert.alert('SOS Error', 'Failed to send SOS. Please call security directly.');
@@ -152,11 +178,16 @@ const SOSScreen = ({ navigation }) => {
           <View style={styles.contactRow}>
             <Text style={styles.contactLabel}>Campus Security Control Room</Text>
           </View>
-          <View style={styles.contactRow}>
-            <Text style={styles.contactLabel}>
-              Emergency Contact: {user?.emergencyContact || 'Not set'}
-            </Text>
-          </View>
+          {(user?.emergencyContacts || []).map((c, i) => (
+            <View key={i} style={styles.contactRow}>
+              <Text style={styles.contactLabel}>{c.name} — {c.phone}</Text>
+            </View>
+          ))}
+          {(!user?.emergencyContacts || user.emergencyContacts.length === 0) && (
+            <View style={styles.contactRow}>
+              <Text style={styles.contactLabel}>No emergency contacts configured</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.callButtonsRow}>
@@ -209,11 +240,20 @@ const SOSScreen = ({ navigation }) => {
         <View style={styles.destinationBox}>
           <Text style={styles.destinationText}>Campus Security Control Room</Text>
         </View>
-        <View style={styles.destinationBox}>
-          <Text style={styles.destinationText}>
-            Emergency Contact: {user?.emergencyContact || '+263 7X XXX XXXX'}
-          </Text>
-        </View>
+        <ScrollView style={styles.contactsScroll} contentContainerStyle={{ paddingBottom: 4 }}>
+          {(user?.emergencyContacts || []).map((c, i) => (
+            <View key={i} style={styles.destinationBox}>
+              <Text style={styles.destinationText}>{c.name} — {c.phone}</Text>
+            </View>
+          ))}
+          {(!user?.emergencyContacts || user.emergencyContacts.length === 0) && (
+            <View style={styles.destinationBox}>
+              <Text style={[styles.destinationText, { color: COLORS.danger }]}>
+                No emergency contacts — add them in Settings
+              </Text>
+            </View>
+          )}
+        </ScrollView>
 
         <View style={styles.callButtonsRow}>
           <TouchableOpacity style={styles.callSecurityBtnInactive} onPress={callSecurity}>
@@ -269,6 +309,7 @@ const styles = StyleSheet.create({
     padding: 14, width: '100%', marginBottom: 8, backgroundColor: COLORS.greyLight,
   },
   destinationText: { fontSize: 14, color: COLORS.text, textAlign: 'center' },
+  contactsScroll: { maxHeight: 160, width: '100%' },
   gpsInfo: { fontSize: 12, color: COLORS.danger, marginTop: 16 },
   gpsSignal: { fontSize: 12, color: COLORS.danger, fontWeight: '600' },
   // Active SOS styles

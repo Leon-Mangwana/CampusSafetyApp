@@ -14,10 +14,22 @@ const RegisterScreen = ({ navigation }) => {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [emergencyContact, setEmergencyContact] = useState('');
+  const [contacts, setContacts] = useState([
+    { name: '', phone: '' },
+    { name: '', phone: '' },
+    { name: '', phone: '' },
+  ]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const updateContact = (index, field, value) => {
+    setContacts((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
 
   const handleRegister = async () => {
     if (!fullName.trim() || !email.trim() || !phone.trim() || !password.trim()) {
@@ -35,10 +47,22 @@ const RegisterScreen = ({ navigation }) => {
       return;
     }
 
+    const emergencyContacts = contacts
+      .map((c) => ({ name: c.name.trim(), phone: c.phone.trim() }))
+      .filter((c) => c.name && c.phone);
+
+    if (emergencyContacts.length < 3) {
+      Alert.alert(
+        'Emergency Contacts Required',
+        'Please provide at least 3 emergency contacts (name and phone number for each).'
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       // Create user on the backend (Firebase Auth + database)
-      await registerUser({ email, password, fullName, phone, emergencyContact, role: 'student' });
+      await registerUser({ email, password, fullName, phone, emergencyContacts, role: 'student' });
 
       // Automatically sign in with Firebase Auth
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -50,7 +74,7 @@ const RegisterScreen = ({ navigation }) => {
         fullName,
         role: 'student',
         phone,
-        emergencyContact,
+        emergencyContacts,
       };
 
       await signIn(idToken, userData);
@@ -103,15 +127,31 @@ const RegisterScreen = ({ navigation }) => {
             keyboardType="phone-pad"
           />
 
-          <Text style={styles.label}>Emergency Contact Number</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="+263 7X XXX XXXX"
-            placeholderTextColor={COLORS.grey}
-            value={emergencyContact}
-            onChangeText={setEmergencyContact}
-            keyboardType="phone-pad"
-          />
+          <Text style={styles.sectionHeader}>Emergency Contacts *</Text>
+          <Text style={styles.sectionSubtext}>
+            Provide at least 3 contacts who should be alerted if you trigger an SOS.
+          </Text>
+
+          {contacts.map((c, index) => (
+            <View key={index} style={styles.contactBlock}>
+              <Text style={styles.contactBlockTitle}>Contact {index + 1}</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Name (e.g. Mum, Roommate)"
+                placeholderTextColor={COLORS.grey}
+                value={c.name}
+                onChangeText={(v) => updateContact(index, 'name', v)}
+              />
+              <TextInput
+                style={[styles.input, { marginTop: 8 }]}
+                placeholder="+263 7X XXX XXXX"
+                placeholderTextColor={COLORS.grey}
+                value={c.phone}
+                onChangeText={(v) => updateContact(index, 'phone', v)}
+                keyboardType="phone-pad"
+              />
+            </View>
+          ))}
 
           <Text style={styles.label}>Password *</Text>
           <TextInput
@@ -187,6 +227,19 @@ const styles = StyleSheet.create({
   registerButtonText: { color: COLORS.white, fontSize: 16, fontWeight: '600' },
   signInLink: { alignItems: 'center', marginTop: 20, marginBottom: 32 },
   signInLinkText: { color: COLORS.primary, fontSize: 14 },
+  sectionHeader: {
+    fontSize: 15, fontWeight: '700', color: COLORS.text, marginTop: 20,
+  },
+  sectionSubtext: {
+    fontSize: 12, color: COLORS.textSecondary, marginTop: 2, marginBottom: 4,
+  },
+  contactBlock: {
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: 8,
+    padding: 12, marginTop: 10, backgroundColor: COLORS.white,
+  },
+  contactBlockTitle: {
+    fontSize: 13, fontWeight: '600', color: COLORS.primary, marginBottom: 6,
+  },
 });
 
 export default RegisterScreen;

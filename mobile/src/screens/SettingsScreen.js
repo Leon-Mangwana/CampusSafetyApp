@@ -7,18 +7,55 @@ import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { updateProfile } from '../services/api';
 
+const MAX_CONTACTS = 5;
+const MIN_CONTACTS = 3;
+
 const SettingsScreen = ({ navigation }) => {
   const { user, signOut, updateUser } = useAuth();
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [phone, setPhone] = useState(user?.phone || '');
-  const [emergencyContact, setEmergencyContact] = useState(user?.emergencyContact || '');
+  const [contacts, setContacts] = useState(() => {
+    const existing = Array.isArray(user?.emergencyContacts) ? user.emergencyContacts : [];
+    const padded = [...existing];
+    while (padded.length < MIN_CONTACTS) padded.push({ name: '', phone: '' });
+    return padded;
+  });
   const [pushNotifications, setPushNotifications] = useState(true);
 
+  const updateContact = (index, field, value) => {
+    setContacts((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const addContact = () => {
+    if (contacts.length >= MAX_CONTACTS) return;
+    setContacts((prev) => [...prev, { name: '', phone: '' }]);
+  };
+
+  const removeContact = (index) => {
+    setContacts((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const handleSave = async () => {
+    const emergencyContacts = contacts
+      .map((c) => ({ name: (c.name || '').trim(), phone: (c.phone || '').trim() }))
+      .filter((c) => c.name && c.phone);
+
+    if (emergencyContacts.length < MIN_CONTACTS) {
+      Alert.alert(
+        'More Contacts Needed',
+        `Please provide at least ${MIN_CONTACTS} emergency contacts (name and phone for each).`
+      );
+      return;
+    }
+
     try {
-      await updateProfile({ fullName, phone, emergencyContact });
-      await updateUser({ fullName, phone, emergencyContact });
+      await updateProfile({ fullName, phone, emergencyContacts });
+      await updateUser({ fullName, phone, emergencyContacts });
       setEditing(false);
       Alert.alert('Success', 'Profile updated successfully.');
     } catch (error) {
@@ -71,13 +108,43 @@ const SettingsScreen = ({ navigation }) => {
                 onChangeText={setPhone}
                 keyboardType="phone-pad"
               />
-              <Text style={styles.fieldLabel}>Emergency Contact</Text>
-              <TextInput
-                style={styles.input}
-                value={emergencyContact}
-                onChangeText={setEmergencyContact}
-                keyboardType="phone-pad"
-              />
+
+              <Text style={[styles.fieldLabel, { marginTop: 20 }]}>
+                Emergency Contacts (min {MIN_CONTACTS}, max {MAX_CONTACTS})
+              </Text>
+              {contacts.map((c, index) => (
+                <View key={index} style={styles.contactBlock}>
+                  <View style={styles.contactBlockHeader}>
+                    <Text style={styles.contactBlockTitle}>Contact {index + 1}</Text>
+                    {contacts.length > MIN_CONTACTS && (
+                      <TouchableOpacity onPress={() => removeContact(index)}>
+                        <Text style={styles.removeText}>Remove</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Name"
+                    placeholderTextColor={COLORS.grey}
+                    value={c.name}
+                    onChangeText={(v) => updateContact(index, 'name', v)}
+                  />
+                  <TextInput
+                    style={[styles.input, { marginTop: 8 }]}
+                    placeholder="+263 7X XXX XXXX"
+                    placeholderTextColor={COLORS.grey}
+                    value={c.phone}
+                    onChangeText={(v) => updateContact(index, 'phone', v)}
+                    keyboardType="phone-pad"
+                  />
+                </View>
+              ))}
+              {contacts.length < MAX_CONTACTS && (
+                <TouchableOpacity style={styles.addContactButton} onPress={addContact}>
+                  <Text style={styles.addContactText}>+ Add Another Contact</Text>
+                </TouchableOpacity>
+              )}
+
               <View style={styles.editActions}>
                 <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
                   <Text style={styles.saveButtonText}>Save Changes</Text>
@@ -88,9 +155,23 @@ const SettingsScreen = ({ navigation }) => {
               </View>
             </>
           ) : (
-            <TouchableOpacity style={styles.editButton} onPress={() => setEditing(true)}>
-              <Text style={styles.editButtonText}>Edit Profile</Text>
-            </TouchableOpacity>
+            <>
+              <View style={styles.contactsSummary}>
+                <Text style={styles.summaryLabel}>Emergency Contacts</Text>
+                {(user?.emergencyContacts || []).length === 0 ? (
+                  <Text style={styles.summaryEmpty}>None set — tap Edit to add at least {MIN_CONTACTS}.</Text>
+                ) : (
+                  (user.emergencyContacts || []).map((c, i) => (
+                    <Text key={i} style={styles.summaryItem}>
+                      {i + 1}. {c.name} — {c.phone}
+                    </Text>
+                  ))
+                )}
+              </View>
+              <TouchableOpacity style={styles.editButton} onPress={() => setEditing(true)}>
+                <Text style={styles.editButtonText}>Edit Profile</Text>
+              </TouchableOpacity>
+            </>
           )}
         </View>
 
@@ -189,6 +270,27 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   logoutButtonText: { color: COLORS.white, fontSize: 16, fontWeight: '600' },
+  contactBlock: {
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: 8,
+    padding: 10, marginTop: 8, backgroundColor: COLORS.white,
+  },
+  contactBlockHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6,
+  },
+  contactBlockTitle: { fontSize: 13, fontWeight: '600', color: COLORS.primary },
+  removeText: { fontSize: 12, color: COLORS.danger, fontWeight: '600' },
+  addContactButton: {
+    borderWidth: 1, borderColor: COLORS.primary, borderStyle: 'dashed',
+    borderRadius: 8, padding: 10, alignItems: 'center', marginTop: 10,
+  },
+  addContactText: { color: COLORS.primary, fontSize: 13, fontWeight: '600' },
+  contactsSummary: {
+    borderTopWidth: 1, borderTopColor: COLORS.border,
+    paddingTop: 12, marginTop: 8, marginBottom: 12,
+  },
+  summaryLabel: { fontSize: 13, fontWeight: '600', color: COLORS.text, marginBottom: 6 },
+  summaryItem: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 2 },
+  summaryEmpty: { fontSize: 13, color: COLORS.danger, fontStyle: 'italic' },
 });
 
 export default SettingsScreen;

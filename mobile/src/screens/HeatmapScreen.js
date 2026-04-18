@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Dimensions,
 } from 'react-native';
@@ -21,19 +21,25 @@ const getCircleColor = (weight) => {
   return 'rgba(76,175,80,0.35)';                    // Low - green
 };
 
+const REFRESH_INTERVAL_MS = 5000;
+
 const HeatmapScreen = () => {
   const [dataPoints, setDataPoints] = useState([]);
   const [activeFilter, setActiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
   const [region, setRegion] = useState(DEFAULT_CAMPUS);
+  const filterRef = useRef(activeFilter);
 
   useEffect(() => {
     getUserLocation();
   }, []);
 
   useEffect(() => {
+    filterRef.current = activeFilter;
     fetchData();
+    const intervalId = setInterval(() => fetchData({ silent: true }), REFRESH_INTERVAL_MS);
+    return () => clearInterval(intervalId);
   }, [activeFilter]);
 
   const getUserLocation = async () => {
@@ -51,26 +57,28 @@ const HeatmapScreen = () => {
     } catch { /* use default */ }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
-      const result = await getHeatmapData(activeFilter);
+      const result = await getHeatmapData(filterRef.current);
       setDataPoints(result.dataPoints || []);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
-      // Use demo data if API is unavailable
-      const lat = region.latitude || 0;
-      const lng = region.longitude || 0;
-      setDataPoints([
-        { latitude: lat + 0.0004, longitude: lng - 0.0006, weight: 3, type: 'theft', severity: 'high' },
-        { latitude: lat - 0.0006, longitude: lng + 0.0009, weight: 2, type: 'harassment', severity: 'medium' },
-        { latitude: lat + 0.0009, longitude: lng + 0.0014, weight: 1, type: 'vandalism', severity: 'low' },
-        { latitude: lat - 0.0011, longitude: lng - 0.0011, weight: 3, type: 'assault', severity: 'high' },
-        { latitude: lat - 0.0001, longitude: lng + 0.0004, weight: 2, type: 'theft', severity: 'medium' },
-      ]);
-      setLastUpdated(new Date().toLocaleTimeString());
+      if (!silent) {
+        // Use demo data if API is unavailable
+        const lat = region.latitude || 0;
+        const lng = region.longitude || 0;
+        setDataPoints([
+          { latitude: lat + 0.0004, longitude: lng - 0.0006, weight: 3, type: 'theft', severity: 'high' },
+          { latitude: lat - 0.0006, longitude: lng + 0.0009, weight: 2, type: 'harassment', severity: 'medium' },
+          { latitude: lat + 0.0009, longitude: lng + 0.0014, weight: 1, type: 'vandalism', severity: 'low' },
+          { latitude: lat - 0.0011, longitude: lng - 0.0011, weight: 3, type: 'assault', severity: 'high' },
+          { latitude: lat - 0.0001, longitude: lng + 0.0004, weight: 2, type: 'theft', severity: 'medium' },
+        ]);
+        setLastUpdated(new Date().toLocaleTimeString());
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -143,7 +151,9 @@ const HeatmapScreen = () => {
         ))}
       </View>
 
-      <Text style={styles.lastUpdated}>Last updated: {lastUpdated || 'Loading...'}</Text>
+      <Text style={styles.lastUpdated}>
+        Last updated: {lastUpdated || 'Loading...'} (auto-refresh every 5s)
+      </Text>
     </SafeAreaView>
   );
 };

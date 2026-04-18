@@ -21,6 +21,10 @@ const triggerSOS = async (req, res) => {
       return res.status(404).json({ error: 'User not found.' });
     }
 
+    const emergencyContacts = Array.isArray(userData.emergencyContacts)
+      ? userData.emergencyContacts
+      : [];
+
     const alertId = uuidv4();
     const sosAlert = {
       alertId,
@@ -30,6 +34,7 @@ const triggerSOS = async (req, res) => {
       longitude: parseFloat(longitude),
       timestamp: new Date().toISOString(),
       status: 'active',
+      emergencyContacts,
     };
 
     await db.ref(`sosAlerts/${alertId}`).set(sosAlert);
@@ -58,18 +63,19 @@ const triggerSOS = async (req, res) => {
       { alertId, latitude: String(latitude), longitude: String(longitude), type: 'sos' }
     );
 
-    // SMS to emergency contact (placeholder — integrate Twilio or similar)
-    if (userData.emergencyContact) {
+    // SMS to emergency contacts (the mobile client also fires a native SMS
+    // deep-link for instant delivery; this log is for backend audit trail).
+    for (const contact of emergencyContacts) {
       console.log(
-        `[SMS] Sending SOS to emergency contact ${userData.emergencyContact}: ` +
+        `[SMS] SOS -> ${contact.name} (${contact.phone}): ` +
         `${userData.fullName} triggered SOS at ${latitude}, ${longitude}`
       );
-      // In production, integrate with Twilio/SMS gateway here
     }
 
     res.status(201).json({
       message: 'SOS Alert Activated. Help is on the way.',
       alertId,
+      emergencyContacts,
     });
   } catch (error) {
     console.error('SOS trigger error:', error);

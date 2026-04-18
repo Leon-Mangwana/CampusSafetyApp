@@ -1,12 +1,39 @@
 const { auth, db } = require('../config/firebase');
 const { v4: uuidv4 } = require('uuid');
 
+const MAX_EMERGENCY_CONTACTS = 5;
+
+// Validate & normalise an emergencyContacts array.
+// Each entry must have {name, phone}. Returns {valid, contacts|error}.
+const normaliseEmergencyContacts = (input) => {
+  if (input === undefined || input === null) return { valid: true, contacts: [] };
+  if (!Array.isArray(input)) {
+    return { valid: false, error: 'emergencyContacts must be an array.' };
+  }
+  if (input.length > MAX_EMERGENCY_CONTACTS) {
+    return { valid: false, error: `At most ${MAX_EMERGENCY_CONTACTS} emergency contacts allowed.` };
+  }
+  const contacts = [];
+  for (const c of input) {
+    if (!c || typeof c !== 'object') {
+      return { valid: false, error: 'Each emergency contact must be an object with name and phone.' };
+    }
+    const name = typeof c.name === 'string' ? c.name.trim() : '';
+    const phone = typeof c.phone === 'string' ? c.phone.trim() : '';
+    if (!name || !phone) {
+      return { valid: false, error: 'Each emergency contact needs a name and phone number.' };
+    }
+    contacts.push({ name, phone });
+  }
+  return { valid: true, contacts };
+};
+
 /**
  * Register a new user
  */
 const register = async (req, res) => {
   try {
-    const { email, password, fullName, phone, emergencyContact, role } = req.body;
+    const { email, password, fullName, phone, emergencyContacts, role } = req.body;
 
     if (!email) {
       return res.status(400).json({
@@ -20,6 +47,11 @@ const register = async (req, res) => {
 
     if (!fullName || !phone) {
       return res.status(400).json({ error: 'Full name and phone number are required.' });
+    }
+
+    const contactsResult = normaliseEmergencyContacts(emergencyContacts);
+    if (!contactsResult.valid) {
+      return res.status(400).json({ error: contactsResult.error });
     }
 
     // Create user in Firebase Auth
@@ -36,7 +68,7 @@ const register = async (req, res) => {
       fullName,
       role: role || 'student',
       phone,
-      emergencyContact: emergencyContact || null,
+      emergencyContacts: contactsResult.contacts,
       createdAt: new Date().toISOString(),
       fcmToken: null,
       lastLatitude: null,
@@ -86,12 +118,19 @@ const getProfile = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const userId = req.user.uid;
-    const { fullName, phone, emergencyContact } = req.body;
+    const { fullName, phone, emergencyContacts } = req.body;
 
     const updates = {};
     if (fullName) updates.fullName = fullName;
     if (phone) updates.phone = phone;
-    if (emergencyContact !== undefined) updates.emergencyContact = emergencyContact;
+
+    if (emergencyContacts !== undefined) {
+      const contactsResult = normaliseEmergencyContacts(emergencyContacts);
+      if (!contactsResult.valid) {
+        return res.status(400).json({ error: contactsResult.error });
+      }
+      updates.emergencyContacts = contactsResult.contacts;
+    }
 
     await db.ref(`users/${userId}`).update(updates);
     res.json({ message: 'Profile updated successfully.' });

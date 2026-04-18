@@ -96,6 +96,47 @@ CampusSafetyApp/
    - **Android**: Press `a` to open in Android emulator, or scan QR code with Expo Go
    - **iOS**: Press `i` to open in iOS simulator, or scan QR code with Expo Go
 
+## Security & Data Protection
+
+The backend is designed to meet the security objective defined in Chapter 1
+(AES-256 at rest, TLS 1.3 in transit, ≥100 concurrent users).
+
+### Encryption at rest — AES-256
+
+User profiles, incident reports, SOS alerts, and notifications are persisted in
+**Firebase Realtime Database**, which transparently encrypts all stored data
+with AES-256 ([Google Cloud data encryption](https://cloud.google.com/docs/security/encryption/default-encryption)).
+No application-level configuration is required.
+
+### Encryption in transit — TLS 1.3
+
+Two hops exist:
+
+1. **Mobile → Node API.** Set `HTTPS_KEY_PATH` and `HTTPS_CERT_PATH` in the
+   backend `.env`. `server.js` then serves over HTTPS with `minVersion` and
+   `maxVersion` both pinned to `'TLSv1.3'`. Hit `/api/health` — the response
+   includes `"tls": "enabled"` when the connection was encrypted.
+   In production you may alternatively terminate TLS at an upstream reverse
+   proxy (Cloud Run, nginx, Heroku router); those all enforce TLS 1.2+ and
+   typically negotiate TLS 1.3 automatically.
+2. **Node API → Firebase.** The Firebase Admin SDK negotiates TLS 1.3 against
+   Google's endpoints automatically — no config required.
+
+HSTS is enabled on every response with a 2-year `max-age`, `includeSubDomains`,
+and `preload`, so browsers upgrade subsequent requests even if a user typed
+`http://`.
+
+### Concurrent user capacity
+
+- Firebase Realtime Database supports 200,000 concurrent connections per
+  database by default — far above the 100-user objective.
+- Express sits behind `express-rate-limit` (100 req / 15 min per IP for
+  general API, stricter limits on `/incidents` and `/sos`), preventing one
+  misbehaving client from starving the others.
+- `app.set('trust proxy', 1)` ensures `req.ip` resolves to the real client
+  IP when behind a reverse proxy, so rate-limiting actually works in
+  production.
+
 ## Tech Stack
 
 - **Frontend**: React Native, Expo, React Navigation 7
