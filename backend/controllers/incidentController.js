@@ -49,34 +49,44 @@ const submitReport = async (req, res) => {
 
     await db.ref(`incidents/${incidentId}`).set(incident);
 
-    // If high severity, notify nearby users
+    // Every incident is dispatched to security — the dashboard relies on this.
+    const securitySnapshot = await db
+      .ref('users')
+      .orderByChild('role')
+      .equalTo('security')
+      .once('value');
+    const securityUsers = securitySnapshot.val() || {};
+    const securityTokens = [];
+    for (const [uid, officer] of Object.entries(securityUsers)) {
+      if (officer.fcmToken) securityTokens.push(officer.fcmToken);
+      await storeNotification(uid, incidentId, 'incident',
+        `New ${severity} severity ${type} incident reported.`
+      );
+    }
+
+    // Push-notify security for every severity so officers can respond quickly.
+    await sendPushNotification(
+      securityTokens,
+      `New ${severity.toUpperCase()} incident`,
+      `${type} reported. Open the dashboard to respond.`,
+      { incidentId, type, severity }
+    );
+
+    // For high severity, also alert nearby students so they can stay clear.
     if (severity === 'high') {
       const nearbyUsers = await findUsersWithinRadius(
         incident.latitude, incident.longitude, 500
       );
-      const tokens = nearbyUsers
+      const nearbyTokens = nearbyUsers
         .filter((u) => u.fcmToken)
         .map((u) => u.fcmToken);
 
       await sendPushNotification(
-        tokens,
+        nearbyTokens,
         'Safety Alert',
         `A ${type} incident has been reported near you. Stay alert.`,
         { incidentId, type, severity }
       );
-
-      // Notify all security officers
-      const securitySnapshot = await db
-        .ref('users')
-        .orderByChild('role')
-        .equalTo('security')
-        .once('value');
-      const securityUsers = securitySnapshot.val() || {};
-      for (const [uid, officer] of Object.entries(securityUsers)) {
-        await storeNotification(uid, incidentId, 'incident',
-          `New ${severity} severity ${type} incident reported.`
-        );
-      }
     }
 
     res.status(201).json({

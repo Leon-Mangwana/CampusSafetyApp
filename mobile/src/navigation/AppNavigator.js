@@ -45,8 +45,12 @@ const tabStyles = StyleSheet.create({
 });
 
 function MainTabs() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'security' || user?.role === 'admin';
+
   return (
     <Tab.Navigator
+      initialRouteName={isAdmin ? 'Dashboard' : 'Home'}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: COLORS.primary,
@@ -64,6 +68,16 @@ function MainTabs() {
         },
       }}
     >
+      {isAdmin && (
+        <Tab.Screen
+          name="Dashboard"
+          component={SecurityDashboardScreen}
+          options={{
+            tabBarLabel: 'Dashboard',
+            tabBarIcon: ({ color }) => <TabIcon label="Dashboard" color={color} />,
+          }}
+        />
+      )}
       <Tab.Screen
         name="Home"
         component={HomeScreen}

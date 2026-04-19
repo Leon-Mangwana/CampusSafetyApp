@@ -3,13 +3,16 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator,
 } from 'react-native';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut as fbSignOut } from 'firebase/auth';
 import { auth } from '../services/firebase';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { getProfile } from '../services/api';
 
+const ADMIN_ROLES = ['admin', 'security'];
+
 const LoginScreen = ({ navigation }) => {
+  const [loginAs, setLoginAs] = useState('student'); // 'student' | 'admin'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -32,26 +35,44 @@ const LoginScreen = ({ navigation }) => {
       const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
       await AsyncStorage.setItem('userToken', idToken);
 
-      let userData;
+      let profile;
       try {
-        const profile = await getProfile();
-        userData = {
-          uid: userCredential.user.uid,
-          email: userCredential.user.email,
-          fullName: profile.fullName || userCredential.user.displayName || email.split('@')[0],
-          role: profile.role || 'student',
-          phone: profile.phone || '',
-          emergencyContact: profile.emergencyContact || '',
-        };
+        profile = await getProfile();
       } catch {
-        // If profile fetch fails, use basic Firebase data
-        userData = {
-          uid: userCredential.user.uid,
-          email: userCredential.user.email,
-          fullName: userCredential.user.displayName || email.split('@')[0],
-          role: 'student',
-        };
+        profile = null;
       }
+
+      const accountRole = profile?.role || 'student';
+      const isAdminAccount = ADMIN_ROLES.includes(accountRole);
+
+      // Enforce that the selected login type matches the account's actual role.
+      if (loginAs === 'admin' && !isAdminAccount) {
+        await fbSignOut(auth);
+        await AsyncStorage.removeItem('userToken');
+        Alert.alert(
+          'Not an Admin Account',
+          'This account does not have admin access. Switch to the Student tab to sign in.'
+        );
+        return;
+      }
+      if (loginAs === 'student' && isAdminAccount) {
+        await fbSignOut(auth);
+        await AsyncStorage.removeItem('userToken');
+        Alert.alert(
+          'Use Admin Login',
+          'This is an admin account — switch to the Admin tab to sign in.'
+        );
+        return;
+      }
+
+      const userData = {
+        uid: userCredential.user.uid,
+        email: userCredential.user.email,
+        fullName: profile?.fullName || userCredential.user.displayName || email.split('@')[0],
+        role: accountRole,
+        phone: profile?.phone || '',
+        emergencyContacts: Array.isArray(profile?.emergencyContacts) ? profile.emergencyContacts : [],
+      };
 
       await signIn(idToken, userData);
     } catch (error) {
@@ -69,6 +90,8 @@ const LoginScreen = ({ navigation }) => {
     }
   };
 
+  const isAdminTab = loginAs === 'admin';
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -76,15 +99,41 @@ const LoginScreen = ({ navigation }) => {
     >
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <View style={styles.logoBadge}>
+          <View style={[styles.logoBadge, isAdminTab && { backgroundColor: COLORS.primaryDark }]}>
             <Text style={styles.logoText}>Campus Safety</Text>
           </View>
           <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in with your university email</Text>
+          <Text style={styles.subtitle}>
+            {isAdminTab ? 'Admin / Security portal' : 'Sign in with your university email'}
+          </Text>
+        </View>
+
+        <View style={styles.roleToggle}>
+          <TouchableOpacity
+            style={[styles.roleTab, !isAdminTab && styles.roleTabActive]}
+            onPress={() => setLoginAs('student')}
+          >
+            <Text style={[styles.roleTabText, !isAdminTab && styles.roleTabTextActive]}>
+              Login as Student
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.roleTab,
+              isAdminTab && { ...styles.roleTabActive, backgroundColor: COLORS.primaryDark },
+            ]}
+            onPress={() => setLoginAs('admin')}
+          >
+            <Text style={[styles.roleTabText, isAdminTab && styles.roleTabTextActive]}>
+              Login as Admin
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.form}>
-          <Text style={styles.label}>University Email</Text>
+          <Text style={styles.label}>
+            {isAdminTab ? 'Admin Email' : 'University Email'}
+          </Text>
           <TextInput
             style={styles.input}
             placeholder="e.g. student@university.ac.zw"
@@ -107,14 +156,20 @@ const LoginScreen = ({ navigation }) => {
           />
 
           <TouchableOpacity
-            style={[styles.signInButton, loading && styles.buttonDisabled]}
+            style={[
+              styles.signInButton,
+              isAdminTab && { backgroundColor: COLORS.primaryDark },
+              loading && styles.buttonDisabled,
+            ]}
             onPress={handleLogin}
             disabled={loading}
           >
             {loading ? (
               <ActivityIndicator color={COLORS.white} />
             ) : (
-              <Text style={styles.signInButtonText}>Sign In</Text>
+              <Text style={styles.signInButtonText}>
+                {isAdminTab ? 'Sign In as Admin' : 'Sign In as Student'}
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -122,18 +177,26 @@ const LoginScreen = ({ navigation }) => {
             <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
           </TouchableOpacity>
 
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
+          {isAdminTab ? (
+            <Text style={styles.adminNote}>
+              Admin accounts are issued by campus IT. They cannot be self-registered.
+            </Text>
+          ) : (
+            <>
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>OR</Text>
+                <View style={styles.dividerLine} />
+              </View>
 
-          <TouchableOpacity
-            style={styles.createAccountButton}
-            onPress={() => navigation.navigate('Register')}
-          >
-            <Text style={styles.createAccountText}>Create New Account</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.createAccountButton}
+                onPress={() => navigation.navigate('Register')}
+              >
+                <Text style={styles.createAccountText}>Create New Student Account</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -187,6 +250,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   createAccountText: { color: COLORS.primary, fontSize: 16, fontWeight: '600' },
+  roleToggle: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.greyLight,
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 16,
+  },
+  roleTab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  roleTabActive: {
+    backgroundColor: COLORS.primary,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+  },
+  roleTabText: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
+  roleTabTextActive: { color: COLORS.white },
+  adminNote: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginTop: 20,
+    fontStyle: 'italic',
+  },
 });
 
 export default LoginScreen;

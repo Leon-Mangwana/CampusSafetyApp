@@ -1,10 +1,25 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet,
-  RefreshControl, SafeAreaView, ScrollView,
+  View, Text, TouchableOpacity, StyleSheet,
+  RefreshControl, SafeAreaView, ScrollView, Linking, Platform,
 } from 'react-native';
 import { COLORS } from '../constants/theme';
 import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, resolveSOSAlert } from '../services/api';
+
+const REFRESH_INTERVAL_MS = 10000;
+
+const openInMaps = (lat, lng, label = 'Incident') => {
+  if (lat == null || lng == null) return;
+  const encodedLabel = encodeURIComponent(label);
+  const url = Platform.select({
+    ios: `maps:0,0?q=${encodedLabel}@${lat},${lng}`,
+    android: `geo:0,0?q=${lat},${lng}(${encodedLabel})`,
+  });
+  Linking.canOpenURL(url).then((ok) => {
+    const finalUrl = ok ? url : `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    Linking.openURL(finalUrl).catch(() => {});
+  });
+};
 
 const StatusBadge = ({ status }) => {
   const colors = {
@@ -34,27 +49,38 @@ const SeverityBadge = ({ severity }) => {
   );
 };
 
-const SecurityDashboardScreen = () => {
+const SecurityDashboardScreen = ({ navigation }) => {
   const [stats, setStats] = useState({ total: 0, pending: 0, active: 0, resolved: 0 });
   const [incidents, setIncidents] = useState([]);
   const [sosAlerts, setSosAlerts] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState('');
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     fetchAll();
+    const intervalId = setInterval(() => fetchAll({ silent: true }), REFRESH_INTERVAL_MS);
+    return () => {
+      mountedRef.current = false;
+      clearInterval(intervalId);
+    };
   }, []);
 
-  const fetchAll = async () => {
+  const fetchAll = async ({ silent = false } = {}) => {
     try {
       const [statsData, incData, sosData] = await Promise.allSettled([
         getIncidentStats(),
         getIncidents({ limit: 20 }),
         getSOSAlerts('active'),
       ]);
+      if (!mountedRef.current) return;
       if (statsData.status === 'fulfilled') setStats(statsData.value);
       if (incData.status === 'fulfilled') setIncidents(incData.value.incidents || []);
       if (sosData.status === 'fulfilled') setSosAlerts(sosData.value.alerts || []);
+      setLastUpdated(new Date().toLocaleTimeString());
     } catch {
+      if (silent) return;
       // Demo data
       setStats({ total: 47, pending: 12, active: 3, resolved: 32 });
       setIncidents([
@@ -91,8 +117,23 @@ const SecurityDashboardScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        {navigation?.canGoBack?.() ? (
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={styles.backText}>Back</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.backButton} />
+        )}
         <Text style={styles.headerTitle}>Security Dashboard</Text>
+        <View style={styles.backButton} />
       </View>
+      <Text style={styles.lastUpdated}>
+        Live feed {lastUpdated ? `• updated ${lastUpdated}` : '• loading...'} (auto-refresh every 10s)
+      </Text>
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -132,12 +173,20 @@ const SecurityDashboardScreen = () => {
                 <Text style={styles.sosLocation}>
                   Location: {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
                 </Text>
-                <TouchableOpacity
-                  style={styles.respondButton}
-                  onPress={() => handleSOSRespond(alert.alertId)}
-                >
-                  <Text style={styles.respondButtonText}>Respond</Text>
-                </TouchableOpacity>
+                <View style={styles.sosActionRow}>
+                  <TouchableOpacity
+                    style={[styles.respondButton, { flex: 1, marginRight: 6 }]}
+                    onPress={() => handleSOSRespond(alert.alertId)}
+                  >
+                    <Text style={styles.respondButtonText}>Mark Responded</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.mapsButton, { flex: 1, marginLeft: 6 }]}
+                    onPress={() => openInMaps(alert.latitude, alert.longitude, `SOS ${alert.userName || ''}`)}
+                  >
+                    <Text style={styles.mapsButtonText}>Open in Maps</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
           </>
@@ -160,22 +209,30 @@ const SecurityDashboardScreen = () => {
               </Text>
               <StatusBadge status={inc.status} />
             </View>
-            {inc.status === 'pending' && (
-              <View style={styles.actionRow}>
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: COLORS.primaryDark }]}
+                onPress={() => openInMaps(inc.latitude, inc.longitude, inc.type)}
+              >
+                <Text style={styles.actionButtonText}>Open in Maps</Text>
+              </TouchableOpacity>
+              {inc.status === 'pending' && (
                 <TouchableOpacity
                   style={[styles.actionButton, { backgroundColor: COLORS.primary }]}
                   onPress={() => handleStatusUpdate(inc.incidentId, 'active')}
                 >
                   <Text style={styles.actionButtonText}>Accept</Text>
                 </TouchableOpacity>
+              )}
+              {inc.status !== 'resolved' && (
                 <TouchableOpacity
                   style={[styles.actionButton, { backgroundColor: COLORS.success }]}
                   onPress={() => handleStatusUpdate(inc.incidentId, 'resolved')}
                 >
                   <Text style={styles.actionButtonText}>Resolve</Text>
                 </TouchableOpacity>
-              </View>
-            )}
+              )}
+            </View>
           </View>
         ))}
       </ScrollView>
@@ -185,8 +242,24 @@ const SecurityDashboardScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  header: { backgroundColor: COLORS.primaryDark, padding: 16, alignItems: 'center' },
+  header: {
+    backgroundColor: COLORS.primaryDark, padding: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
   headerTitle: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
+  backButton: { width: 60 },
+  backText: { color: COLORS.white, fontSize: 15, fontWeight: '600' },
+  lastUpdated: {
+    fontSize: 11, color: COLORS.success, textAlign: 'center',
+    paddingVertical: 6, backgroundColor: COLORS.white,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  sosActionRow: { flexDirection: 'row', marginTop: 8 },
+  mapsButton: {
+    backgroundColor: COLORS.primaryDark, borderRadius: 6,
+    padding: 10, alignItems: 'center',
+  },
+  mapsButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
   content: { padding: 12, paddingBottom: 32 },
   statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
   statCard: {
