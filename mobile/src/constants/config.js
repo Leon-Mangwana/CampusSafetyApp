@@ -1,3 +1,5 @@
+import Constants from 'expo-constants';
+
 // Firebase web config
 export const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyDgQ8F0Uq6CRSwyecABZHsuuxppYZM_DTQ',
@@ -9,5 +11,36 @@ export const FIREBASE_CONFIG = {
   appId: '1:199738302891:web:38d63713b6378bf1c83787',
 };
 
-// Backend API URL — change to your deployed URL in production
-export const API_BASE_URL = 'http://10.45.223.226:3000/api';
+// Backend port used during local development.
+const DEV_API_PORT = 3000;
+
+// Production API URL — set this to your deployed backend before building a release.
+const PRODUCTION_API_URL = 'https://your-production-domain.example.com/api';
+
+// Resolve the laptop's LAN IP from Expo's dev-server manifest. The phone
+// already loads the JS bundle from this host, so the backend at the same IP
+// is guaranteed to be reachable — no more hand-editing when the DHCP lease
+// rotates.
+const resolveDevHost = () => {
+  const candidates = [
+    Constants.expoConfig?.hostUri,
+    Constants.expoGoConfig?.debuggerHost,
+    Constants.manifest2?.extra?.expoGo?.debuggerHost,
+    Constants.manifest?.debuggerHost,
+  ];
+  const hostUri = candidates.find(Boolean);
+  if (!hostUri) return null;
+  return hostUri.split(':')[0];
+};
+
+const buildApiUrl = () => {
+  if (!__DEV__) return PRODUCTION_API_URL;
+  const host = resolveDevHost();
+  if (!host) {
+    console.warn('[config] Could not resolve dev host from Expo manifest — falling back to localhost.');
+    return `http://localhost:${DEV_API_PORT}/api`;
+  }
+  return `http://${host}:${DEV_API_PORT}/api`;
+};
+
+export const API_BASE_URL = buildApiUrl();
