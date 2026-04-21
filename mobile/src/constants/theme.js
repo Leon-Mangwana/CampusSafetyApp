@@ -50,10 +50,13 @@ export const SEVERITY_LEVELS = [
   { label: 'High', value: 'high', color: COLORS.severityHigh },
 ];
 
-// Default campus center coordinates (can be overridden per university)
+// Default campus center coordinates (Midlands State University, Gweru).
+// Used as the fallback region before the device's GPS fix arrives — never
+// leave this at (0, 0) or the map renders over the Atlantic Ocean and
+// looks blank.
 export const DEFAULT_CAMPUS = {
-  latitude: 0,
-  longitude: 0,
+  latitude: -19.4519,
+  longitude: 29.8146,
   latitudeDelta: 0.01,
   longitudeDelta: 0.01,
 };

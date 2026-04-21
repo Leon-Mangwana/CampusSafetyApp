@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Dimensions,
+  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Platform,
 } from 'react-native';
-import MapView, { Circle, Marker } from 'react-native-maps';
+import MapView, { Circle, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getHeatmapData } from '../services/api';
@@ -28,8 +28,11 @@ const HeatmapScreen = () => {
   const [activeFilter, setActiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
-  const [region, setRegion] = useState(DEFAULT_CAMPUS);
+  const [locationError, setLocationError] = useState('');
+  const [mapReady, setMapReady] = useState(false);
+  const mapRef = useRef(null);
   const filterRef = useRef(activeFilter);
+  const userRegionRef = useRef(null);
 
   useEffect(() => {
     getUserLocation();
@@ -42,19 +45,34 @@ const HeatmapScreen = () => {
     return () => clearInterval(intervalId);
   }, [activeFilter]);
 
+  // When the map becomes ready after the user's GPS fix has already arrived,
+  // animate to their location. This handles the race where GPS resolves
+  // before the MapView finishes mounting.
+  useEffect(() => {
+    if (mapReady && userRegionRef.current && mapRef.current) {
+      mapRef.current.animateToRegion(userRegionRef.current, 500);
+    }
+  }, [mapReady]);
+
   const getUserLocation = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        setRegion({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        });
+      if (status !== 'granted') {
+        setLocationError('Location permission denied — showing default campus view.');
+        return;
       }
-    } catch { /* use default */ }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const region = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      };
+      userRegionRef.current = region;
+      if (mapRef.current) mapRef.current.animateToRegion(region, 500);
+    } catch (err) {
+      setLocationError('Unable to get location — showing default campus view.');
+    }
   };
 
   const fetchData = async ({ silent = false } = {}) => {
@@ -65,9 +83,11 @@ const HeatmapScreen = () => {
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
       if (!silent) {
-        // Use demo data if API is unavailable
-        const lat = region.latitude || 0;
-        const lng = region.longitude || 0;
+        // Use demo data if API is unavailable so the heatmap is never empty
+        // during a demo / when the backend is offline.
+        const base = userRegionRef.current || DEFAULT_CAMPUS;
+        const lat = base.latitude;
+        const lng = base.longitude;
         setDataPoints([
           { latitude: lat + 0.0004, longitude: lng - 0.0006, weight: 3, type: 'theft', severity: 'high' },
           { latitude: lat - 0.0006, longitude: lng + 0.0009, weight: 2, type: 'harassment', severity: 'medium' },
@@ -90,10 +110,15 @@ const HeatmapScreen = () => {
 
       <View style={styles.mapContainer}>
         <MapView
+          ref={mapRef}
           style={styles.map}
-          initialRegion={region}
+          // Force the Google Maps provider on Android. Without this, some
+          // Android devices render a blank tile surface.
+          provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+          initialRegion={DEFAULT_CAMPUS}
           showsUserLocation
           showsMyLocationButton
+          onMapReady={() => setMapReady(true)}
         >
           {dataPoints.map((point, index) => (
             <Circle
@@ -110,6 +135,12 @@ const HeatmapScreen = () => {
         {loading && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color={COLORS.primary} />
+          </View>
+        )}
+
+        {!!locationError && (
+          <View style={styles.locationBanner}>
+            <Text style={styles.locationBannerText}>{locationError}</Text>
           </View>
         )}
       </View>
@@ -170,6 +201,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  locationBanner: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(211,47,47,0.9)',
+    borderRadius: 8,
+    padding: 10,
+  },
+  locationBannerText: { color: COLORS.white, fontSize: 12, textAlign: 'center', fontWeight: '500' },
   legendRow: {
     flexDirection: 'row',
     justifyContent: 'center',
