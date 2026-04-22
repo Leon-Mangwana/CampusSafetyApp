@@ -15,7 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "config": {
-        "googleMapsApiKey": "REPLACE_WITH_IOS_GOOGLE_MAPS_API_KEY"
+        "googleMapsApiKey": "AIzaSyD8B8Fg3Atfy2QMgmafLDgBcPjpUGRD3XM"
       },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Campus Safety uses your location to report incidents accurately and to share your position during SOS alerts.",
@@ -34,7 +34,7 @@
       ],
       "config": {
         "googleMaps": {
-          "apiKey": "REPLACE_WITH_ANDROID_GOOGLE_MAPS_API_KEY"
+          "apiKey": "AIzaSyD8B8Fg3Atfy2QMgmafLDgBcPjpUGRD3XM"
         }
       }
     },

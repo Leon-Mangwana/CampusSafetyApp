@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Platform,
 } from 'react-native';
-import MapView, { Circle, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Circle, UrlTile, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getHeatmapData } from '../services/api';
@@ -120,6 +120,15 @@ const HeatmapScreen = () => {
           showsMyLocationButton
           onMapReady={() => setMapReady(true)}
         >
+          {/* OpenStreetMap tiles overlay the base Google layer. This keeps the
+              map visible inside Expo Go (where app.json's Google Maps API key
+              is ignored) and during dev without a custom build. */}
+          <UrlTile
+            urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maximumZ={19}
+            flipY={false}
+          />
+
           {dataPoints.map((point, index) => (
             <Circle
               key={index}
