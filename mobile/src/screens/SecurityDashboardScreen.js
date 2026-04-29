@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  RefreshControl, SafeAreaView, ScrollView, Linking, Platform,
+  RefreshControl, SafeAreaView, ScrollView, Linking, Platform, Alert,
 } from 'react-native';
 import { COLORS } from '../constants/theme';
-import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, resolveSOSAlert } from '../services/api';
+import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, deleteIncident, resolveSOSAlert } from '../services/api';
 
 const REFRESH_INTERVAL_MS = 10000;
 
@@ -112,6 +112,32 @@ const SecurityDashboardScreen = ({ navigation }) => {
       await resolveSOSAlert(alertId, 'responded');
       await fetchAll();
     } catch { /* ok */ }
+  };
+
+  const handleDeleteIncident = (incidentId) => {
+    Alert.alert(
+      'Delete Incident',
+      'Permanently remove this incident from the dashboard? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            // Optimistic UI: remove from the list immediately so the dashboard
+            // feels responsive, then sync with the backend.
+            setIncidents((prev) => prev.filter((i) => i.incidentId !== incidentId));
+            try {
+              await deleteIncident(incidentId);
+              await fetchAll();
+            } catch (err) {
+              Alert.alert('Delete Failed', err.message || 'Could not delete the incident.');
+              await fetchAll();
+            }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -232,6 +258,12 @@ const SecurityDashboardScreen = ({ navigation }) => {
                   <Text style={styles.actionButtonText}>Resolve</Text>
                 </TouchableOpacity>
               )}
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: COLORS.danger }]}
+                onPress={() => handleDeleteIncident(inc.incidentId)}
+              >
+                <Text style={styles.actionButtonText}>Delete</Text>
+              </TouchableOpacity>
             </View>
           </View>
         ))}

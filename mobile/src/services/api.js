@@ -56,6 +56,9 @@ export const getIncidentById = (id) => apiRequest(`/incidents/${id}`);
 export const updateIncidentStatus = (id, status) =>
   apiRequest(`/incidents/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
 
+export const deleteIncident = (id) =>
+  apiRequest(`/incidents/${id}`, { method: 'DELETE' });
+
 export const getHeatmapData = (type = '') => {
   const query = type ? `?type=${type}` : '';
   return apiRequest(`/incidents/heatmap${query}`);

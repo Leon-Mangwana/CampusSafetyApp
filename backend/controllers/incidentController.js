@@ -193,6 +193,26 @@ const updateIncidentStatus = async (req, res) => {
 };
 
 /**
+ * Delete an incident (admin/security only). Used to clear out resolved or
+ * stale reports from the dashboard — orphan response logs are left intact
+ * for audit purposes.
+ */
+const deleteIncident = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const snapshot = await db.ref(`incidents/${id}`).once('value');
+    if (!snapshot.exists()) {
+      return res.status(404).json({ error: 'Incident not found.' });
+    }
+    await db.ref(`incidents/${id}`).remove();
+    res.json({ message: 'Incident deleted.' });
+  } catch (error) {
+    console.error('Delete incident error:', error);
+    res.status(500).json({ error: 'Failed to delete incident.' });
+  }
+};
+
+/**
  * Get heatmap data — aggregated incident locations
  */
 const getHeatmapData = async (req, res) => {
@@ -299,6 +319,7 @@ module.exports = {
   getIncidents,
   getIncidentById,
   updateIncidentStatus,
+  deleteIncident,
   getHeatmapData,
   getIncidentStats,
 };
