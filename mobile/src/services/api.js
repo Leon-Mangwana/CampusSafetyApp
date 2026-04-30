@@ -66,6 +66,14 @@ export const getHeatmapData = (type = '') => {
 
 export const getIncidentStats = () => apiRequest('/incidents/stats');
 
+export const getMonthlyReport = ({ month, year } = {}) => {
+  const params = new URLSearchParams();
+  if (month) params.set('month', month);
+  if (year) params.set('year', year);
+  const qs = params.toString();
+  return apiRequest(`/incidents/report/monthly${qs ? `?${qs}` : ''}`);
+};
+
 // SOS
 export const triggerSOS = (latitude, longitude) =>
   apiRequest('/sos', { method: 'POST', body: JSON.stringify({ latitude, longitude }) });

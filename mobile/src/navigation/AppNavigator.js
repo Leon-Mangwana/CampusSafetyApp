@@ -19,6 +19,7 @@ import NotificationsScreen from '../screens/NotificationsScreen';
 import SafetyStatsScreen from '../screens/SafetyStatsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import SecurityDashboardScreen from '../screens/SecurityDashboardScreen';
+import MonthlyReportScreen from '../screens/MonthlyReportScreen';
 import EmergencyContactsScreen from '../screens/EmergencyContactsScreen';
 
 const Stack = createNativeStackNavigator();
@@ -136,7 +137,10 @@ function AppStack() {
       <Stack.Screen name="EmergencyContacts" component={EmergencyContactsScreen} />
       <Stack.Screen name="SafetyStats" component={SafetyStatsScreen} />
       {isSecurityOrAdmin && (
-        <Stack.Screen name="SecurityDashboard" component={SecurityDashboardScreen} />
+        <>
+          <Stack.Screen name="SecurityDashboard" component={SecurityDashboardScreen} />
+          <Stack.Screen name="MonthlyReport" component={MonthlyReportScreen} />
+        </>
       )}
     </Stack.Navigator>
   );

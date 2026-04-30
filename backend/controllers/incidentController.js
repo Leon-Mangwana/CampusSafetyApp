@@ -193,6 +193,110 @@ const updateIncidentStatus = async (req, res) => {
 };
 
 /**
+ * Build an aggregated monthly safety report. Defaults to the current calendar
+ * month if month/year are not supplied. Returns totals, category breakdown,
+ * top hotspot, and a trend comparison vs the previous month — used by the
+ * Monthly Report screen on the admin dashboard.
+ */
+const getMonthlyReport = async (req, res) => {
+  try {
+    const now = new Date();
+    const monthParam = parseInt(req.query.month, 10);
+    const yearParam = parseInt(req.query.year, 10);
+    const month = Number.isInteger(monthParam) && monthParam >= 1 && monthParam <= 12
+      ? monthParam - 1
+      : now.getMonth();
+    const year = Number.isInteger(yearParam) && yearParam > 1970 ? yearParam : now.getFullYear();
+
+    const periodStart = new Date(year, month, 1).getTime();
+    const periodEnd = new Date(year, month + 1, 1).getTime();
+    const prevStart = new Date(year, month - 1, 1).getTime();
+    const prevEnd = periodStart;
+
+    const incidentSnapshot = await db.ref('incidents').once('value');
+    const allIncidents = [];
+    incidentSnapshot.forEach((child) => allIncidents.push(child.val()));
+
+    const inRange = (timestamp, start, end) => {
+      const ts = new Date(timestamp).getTime();
+      return ts >= start && ts < end;
+    };
+    const incidents = allIncidents.filter((i) => inRange(i.timestamp, periodStart, periodEnd));
+    const prevIncidents = allIncidents.filter((i) => inRange(i.timestamp, prevStart, prevEnd));
+
+    const total = incidents.length;
+    const approved = incidents.filter((i) => i.status === 'resolved').length;
+    const resolutionRate = total > 0 ? Math.round((approved / total) * 100) : 0;
+
+    const byCategory = {};
+    incidents.forEach((i) => {
+      const key = i.type || 'other';
+      byCategory[key] = (byCategory[key] || 0) + 1;
+    });
+    const categories = Object.entries(byCategory)
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const locationMap = {};
+    incidents.forEach((i) => {
+      if (i.latitude == null || i.longitude == null) return;
+      const key = `${i.latitude.toFixed(3)},${i.longitude.toFixed(3)}`;
+      if (!locationMap[key]) {
+        locationMap[key] = {
+          latitude: i.latitude,
+          longitude: i.longitude,
+          count: 0,
+        };
+      }
+      locationMap[key].count++;
+    });
+    const topHotspot = Object.values(locationMap).sort((a, b) => b.count - a.count)[0] || null;
+
+    const sosSnapshot = await db.ref('sosAlerts').once('value');
+    let sosAlerts = 0;
+    sosSnapshot.forEach((child) => {
+      const alert = child.val();
+      if (alert?.timestamp && inRange(alert.timestamp, periodStart, periodEnd)) sosAlerts++;
+    });
+
+    let trendPercent = 0;
+    let trendDirection = 'flat';
+    if (prevIncidents.length > 0) {
+      const delta = total - prevIncidents.length;
+      trendPercent = Math.round((Math.abs(delta) / prevIncidents.length) * 100);
+      // Fewer incidents = improvement, more = worsening.
+      if (delta < 0) trendDirection = 'improvement';
+      else if (delta > 0) trendDirection = 'worsening';
+    }
+
+    const monthLabel = new Date(year, month, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    const periodLabel = `1 ${new Date(year, month, 1).toLocaleString('en-US', { month: 'long' })} ${year} - ${new Date(year, month + 1, 0).getDate()} ${new Date(year, month, 1).toLocaleString('en-US', { month: 'long' })} ${year}`;
+
+    res.json({
+      month: month + 1,
+      year,
+      monthLabel,
+      periodLabel,
+      total,
+      approved,
+      sosAlerts,
+      resolutionRate,
+      categories,
+      topHotspot,
+      trend: {
+        percent: trendPercent,
+        direction: trendDirection,
+        previousTotal: prevIncidents.length,
+      },
+    });
+  } catch (error) {
+    console.error('Get monthly report error:', error);
+    res.status(500).json({ error: 'Failed to generate monthly report.' });
+  }
+};
+
+/**
  * Delete an incident (admin/security only). Used to clear out resolved or
  * stale reports from the dashboard — orphan response logs are left intact
  * for audit purposes.
@@ -322,4 +426,5 @@ module.exports = {
   deleteIncident,
   getHeatmapData,
   getIncidentStats,
+  getMonthlyReport,
 };

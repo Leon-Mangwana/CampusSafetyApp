@@ -161,6 +161,13 @@ const SecurityDashboardScreen = ({ navigation }) => {
         Live feed {lastUpdated ? `• updated ${lastUpdated}` : '• loading...'} (auto-refresh every 10s)
       </Text>
 
+      <TouchableOpacity
+        style={styles.reportButton}
+        onPress={() => navigation.navigate('MonthlyReport')}
+      >
+        <Text style={styles.reportButtonText}>View Monthly Safety Report</Text>
+      </TouchableOpacity>
+
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={styles.content}
@@ -329,6 +336,11 @@ const styles = StyleSheet.create({
   actionButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 13 },
   badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   badgeText: { fontSize: 11, fontWeight: '600' },
+  reportButton: {
+    backgroundColor: COLORS.primary, marginHorizontal: 12, marginTop: 8,
+    borderRadius: 8, paddingVertical: 12, alignItems: 'center',
+  },
+  reportButtonText: { color: COLORS.white, fontSize: 14, fontWeight: '700' },
 });
 
 export default SecurityDashboardScreen;
