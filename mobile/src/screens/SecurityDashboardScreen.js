@@ -161,13 +161,6 @@ const SecurityDashboardScreen = ({ navigation }) => {
         Live feed {lastUpdated ? `• updated ${lastUpdated}` : '• loading...'} (auto-refresh every 10s)
       </Text>
 
-      <TouchableOpacity
-        style={styles.reportButton}
-        onPress={() => navigation.navigate('MonthlyReport')}
-      >
-        <Text style={styles.reportButtonText}>View Monthly Safety Report</Text>
-      </TouchableOpacity>
-
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={styles.content}

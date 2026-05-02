@@ -2,6 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text, View, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/theme';
 
@@ -48,6 +49,13 @@ const tabStyles = StyleSheet.create({
 function MainTabs() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'security' || user?.role === 'admin';
+  const insets = useSafeAreaInsets();
+
+  // edgeToEdgeEnabled: true in app.json lets the app draw under the system
+  // gesture area. We add the OS-reported bottom inset so labels don't collide
+  // with the gesture pill / nav bar. A 4px floor gives breathing room on
+  // devices that report 0 (e.g. older 3-button-nav phones).
+  const tabBarBottomPadding = Math.max(insets.bottom, 4);
 
   return (
     <Tab.Navigator
@@ -60,8 +68,9 @@ function MainTabs() {
           backgroundColor: COLORS.white,
           borderTopWidth: 1,
           borderTopColor: COLORS.border,
-          paddingBottom: 4,
-          height: 56,
+          paddingBottom: tabBarBottomPadding,
+          paddingTop: 4,
+          height: 56 + tabBarBottomPadding,
         },
         tabBarLabelStyle: {
           fontSize: 11,
@@ -79,14 +88,26 @@ function MainTabs() {
           }}
         />
       )}
-      <Tab.Screen
-        name="Home"
-        component={HomeScreen}
-        options={{
-          tabBarLabel: 'Home',
-          tabBarIcon: ({ color }) => <TabIcon label="Home" color={color} />,
-        }}
-      />
+      {isAdmin && (
+        <Tab.Screen
+          name="Reports"
+          component={MonthlyReportScreen}
+          options={{
+            tabBarLabel: 'Reports',
+            tabBarIcon: ({ color }) => <TabIcon label="Reports" color={color} />,
+          }}
+        />
+      )}
+      {!isAdmin && (
+        <Tab.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{
+            tabBarLabel: 'Home',
+            tabBarIcon: ({ color }) => <TabIcon label="Home" color={color} />,
+          }}
+        />
+      )}
       <Tab.Screen
         name="Heatmap"
         component={HeatmapScreen}
@@ -137,10 +158,7 @@ function AppStack() {
       <Stack.Screen name="EmergencyContacts" component={EmergencyContactsScreen} />
       <Stack.Screen name="SafetyStats" component={SafetyStatsScreen} />
       {isSecurityOrAdmin && (
-        <>
-          <Stack.Screen name="SecurityDashboard" component={SecurityDashboardScreen} />
-          <Stack.Screen name="MonthlyReport" component={MonthlyReportScreen} />
-        </>
+        <Stack.Screen name="SecurityDashboard" component={SecurityDashboardScreen} />
       )}
     </Stack.Navigator>
   );
