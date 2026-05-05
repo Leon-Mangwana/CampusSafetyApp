@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Platform,
+  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView,
 } from 'react-native';
-import MapView, { Circle, UrlTile, PROVIDER_GOOGLE } from 'react-native-maps';
+import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getHeatmapData } from '../services/api';
@@ -15,24 +15,89 @@ const FILTERS = [
   { label: 'Vandalism', value: 'vandalism' },
 ];
 
-const getCircleColor = (weight) => {
-  if (weight >= 3) return 'rgba(244,67,54,0.35)';  // High - red
-  if (weight >= 2) return 'rgba(255,152,0,0.35)';  // Medium - orange
-  return 'rgba(76,175,80,0.35)';                    // Low - green
-};
-
 const REFRESH_INTERVAL_MS = 5000;
 
+// Leaflet HTML payload. The WebView loads this once at mount time, then we
+// push data updates via window.postMessage from React Native — avoids
+// reloading tiles on every refresh and keeps zoom/pan state intact.
+const buildLeafletHtml = (initialLat, initialLng) => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; background: #f5f5f5; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([${initialLat}, ${initialLng}], 16);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap',
+    }).addTo(map);
+
+    let circles = [];
+    let userMarker = null;
+
+    const colorFor = (weight) => {
+      if (weight >= 3) return '#F44336';
+      if (weight >= 2) return '#FF9800';
+      return '#4CAF50';
+    };
+
+    const renderPoints = (points) => {
+      circles.forEach((c) => map.removeLayer(c));
+      circles = points.map((p) => L.circle([p.latitude, p.longitude], {
+        radius: 50 + (p.weight || 1) * 20,
+        color: colorFor(p.weight),
+        fillColor: colorFor(p.weight),
+        fillOpacity: 0.35,
+        weight: 1,
+      }).addTo(map));
+    };
+
+    const setUserLocation = (lat, lng) => {
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.circleMarker([lat, lng], {
+        radius: 8, color: '#1565C0', fillColor: '#42A5F5',
+        fillOpacity: 1, weight: 2,
+      }).addTo(map);
+      map.setView([lat, lng], 16);
+    };
+
+    const handleMessage = (raw) => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.type === 'points') renderPoints(msg.points || []);
+        if (msg.type === 'userLocation') setUserLocation(msg.latitude, msg.longitude);
+      } catch (e) {}
+    };
+
+    document.addEventListener('message', (e) => handleMessage(e.data));
+    window.addEventListener('message', (e) => handleMessage(e.data));
+  </script>
+</body>
+</html>
+`;
+
 const HeatmapScreen = () => {
-  const [dataPoints, setDataPoints] = useState([]);
   const [activeFilter, setActiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
   const [locationError, setLocationError] = useState('');
-  const [mapReady, setMapReady] = useState(false);
-  const mapRef = useRef(null);
+  const [webReady, setWebReady] = useState(false);
+  const webRef = useRef(null);
   const filterRef = useRef(activeFilter);
-  const userRegionRef = useRef(null);
+  const userCoordsRef = useRef(null);
+  const pendingPointsRef = useRef([]);
+
+  // Build the HTML once. DEFAULT_CAMPUS keeps the initial view sensible
+  // before the user's GPS fix arrives.
+  const html = useRef(buildLeafletHtml(DEFAULT_CAMPUS.latitude, DEFAULT_CAMPUS.longitude)).current;
 
   useEffect(() => {
     getUserLocation();
@@ -45,14 +110,35 @@ const HeatmapScreen = () => {
     return () => clearInterval(intervalId);
   }, [activeFilter]);
 
-  // When the map becomes ready after the user's GPS fix has already arrived,
-  // animate to their location. This handles the race where GPS resolves
-  // before the MapView finishes mounting.
+  // Replay buffered messages once the WebView's JS has booted.
   useEffect(() => {
-    if (mapReady && userRegionRef.current && mapRef.current) {
-      mapRef.current.animateToRegion(userRegionRef.current, 500);
+    if (!webReady || !webRef.current) return;
+    if (userCoordsRef.current) {
+      postToMap({ type: 'userLocation', ...userCoordsRef.current });
     }
-  }, [mapReady]);
+    if (pendingPointsRef.current.length > 0) {
+      postToMap({ type: 'points', points: pendingPointsRef.current });
+    }
+  }, [webReady]);
+
+  const postToMap = (payload) => {
+    if (!webRef.current) return;
+    const json = JSON.stringify(payload).replace(/'/g, "\\'");
+    webRef.current.injectJavaScript(`
+      (function() {
+        try {
+          const data = '${json}';
+          if (typeof window.handleMessage === 'function') {
+            window.handleMessage(data);
+          } else {
+            const evt = new MessageEvent('message', { data });
+            window.dispatchEvent(evt);
+          }
+        } catch (e) {}
+      })();
+      true;
+    `);
+  };
 
   const getUserLocation = async () => {
     try {
@@ -62,14 +148,9 @@ const HeatmapScreen = () => {
         return;
       }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const region = {
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      };
-      userRegionRef.current = region;
-      if (mapRef.current) mapRef.current.animateToRegion(region, 500);
+      const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      userCoordsRef.current = coords;
+      if (webReady) postToMap({ type: 'userLocation', ...coords });
     } catch (err) {
       setLocationError('Unable to get location — showing default campus view.');
     }
@@ -79,22 +160,26 @@ const HeatmapScreen = () => {
     if (!silent) setLoading(true);
     try {
       const result = await getHeatmapData(filterRef.current);
-      setDataPoints(result.dataPoints || []);
+      const points = result.dataPoints || [];
+      pendingPointsRef.current = points;
+      if (webReady) postToMap({ type: 'points', points });
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
       if (!silent) {
-        // Use demo data if API is unavailable so the heatmap is never empty
-        // during a demo / when the backend is offline.
-        const base = userRegionRef.current || DEFAULT_CAMPUS;
+        // Demo data so the heatmap is never empty during a demo / when the
+        // backend is offline.
+        const base = userCoordsRef.current || DEFAULT_CAMPUS;
         const lat = base.latitude;
         const lng = base.longitude;
-        setDataPoints([
-          { latitude: lat + 0.0004, longitude: lng - 0.0006, weight: 3, type: 'theft', severity: 'high' },
-          { latitude: lat - 0.0006, longitude: lng + 0.0009, weight: 2, type: 'harassment', severity: 'medium' },
-          { latitude: lat + 0.0009, longitude: lng + 0.0014, weight: 1, type: 'vandalism', severity: 'low' },
-          { latitude: lat - 0.0011, longitude: lng - 0.0011, weight: 3, type: 'assault', severity: 'high' },
-          { latitude: lat - 0.0001, longitude: lng + 0.0004, weight: 2, type: 'theft', severity: 'medium' },
-        ]);
+        const points = [
+          { latitude: lat + 0.0004, longitude: lng - 0.0006, weight: 3 },
+          { latitude: lat - 0.0006, longitude: lng + 0.0009, weight: 2 },
+          { latitude: lat + 0.0009, longitude: lng + 0.0014, weight: 1 },
+          { latitude: lat - 0.0011, longitude: lng - 0.0011, weight: 3 },
+          { latitude: lat - 0.0001, longitude: lng + 0.0004, weight: 2 },
+        ];
+        pendingPointsRef.current = points;
+        if (webReady) postToMap({ type: 'points', points });
         setLastUpdated(new Date().toLocaleTimeString());
       }
     } finally {
@@ -109,37 +194,21 @@ const HeatmapScreen = () => {
       </View>
 
       <View style={styles.mapContainer}>
-        <MapView
-          ref={mapRef}
+        <WebView
+          ref={webRef}
+          originWhitelist={['*']}
+          source={{ html }}
           style={styles.map}
-          // Force the Google Maps provider on Android. Without this, some
-          // Android devices render a blank tile surface.
-          provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-          initialRegion={DEFAULT_CAMPUS}
-          showsUserLocation
-          showsMyLocationButton
-          onMapReady={() => setMapReady(true)}
-        >
-          {/* OpenStreetMap tiles overlay the base Google layer. This keeps the
-              map visible inside Expo Go (where app.json's Google Maps API key
-              is ignored) and during dev without a custom build. */}
-          <UrlTile
-            urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maximumZ={19}
-            flipY={false}
-          />
-
-          {dataPoints.map((point, index) => (
-            <Circle
-              key={index}
-              center={{ latitude: point.latitude, longitude: point.longitude }}
-              radius={50 + point.weight * 20}
-              fillColor={getCircleColor(point.weight)}
-              strokeColor={getCircleColor(point.weight).replace('0.35', '0.6')}
-              strokeWidth={1}
-            />
-          ))}
-        </MapView>
+          onLoadEnd={() => setWebReady(true)}
+          javaScriptEnabled
+          domStorageEnabled
+          startInLoadingState
+          renderLoading={() => (
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+          )}
+        />
 
         {loading && (
           <View style={styles.loadingOverlay}>
@@ -154,7 +223,6 @@ const HeatmapScreen = () => {
         )}
       </View>
 
-      {/* Legend */}
       <View style={styles.legendRow}>
         <View style={styles.legendItem}>
           <View style={[styles.legendDot, { backgroundColor: COLORS.severityHigh }]} />
@@ -170,7 +238,6 @@ const HeatmapScreen = () => {
         </View>
       </View>
 
-      {/* Filters */}
       <View style={styles.filterRow}>
         <Text style={styles.filterLabel}>Filter:</Text>
         {FILTERS.map((f) => (
@@ -203,7 +270,7 @@ const styles = StyleSheet.create({
   header: { backgroundColor: COLORS.primary, padding: 16, alignItems: 'center' },
   headerTitle: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
   mapContainer: { flex: 1, position: 'relative' },
-  map: { flex: 1 },
+  map: { flex: 1, backgroundColor: COLORS.greyLight },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(255,255,255,0.6)',
