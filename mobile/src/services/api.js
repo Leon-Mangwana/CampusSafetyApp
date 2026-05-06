@@ -1,8 +1,25 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { auth } from './firebase';
 import { API_BASE_URL } from '../constants/config';
 
+// Firebase ID tokens expire after 1 hour. Asking the SDK for the token on
+// each request returns the cached one if still valid, or transparently
+// refreshes it if it's within ~5 minutes of expiry. We mirror the result
+// back into AsyncStorage so cold-start flows that read storage directly
+// stay in sync.
 const getAuthToken = async () => {
-  return await AsyncStorage.getItem('userToken');
+  try {
+    if (auth.currentUser) {
+      const fresh = await auth.currentUser.getIdToken();
+      if (fresh) {
+        await AsyncStorage.setItem('userToken', fresh);
+        return fresh;
+      }
+    }
+  } catch {
+    // Fall through to the storage-cached token below.
+  }
+  return AsyncStorage.getItem('userToken');
 };
 
 const apiRequest = async (endpoint, options = {}) => {

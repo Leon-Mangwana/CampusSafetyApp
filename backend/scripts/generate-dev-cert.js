@@ -36,21 +36,34 @@ const extensions = [
 
 if (!fs.existsSync(CERT_DIR)) fs.mkdirSync(CERT_DIR, { recursive: true });
 
-const pems = selfsigned.generate(attrs, {
-  algorithm: 'sha256',
-  days: 365,
-  keySize: 2048,
-  extensions,
+const main = async () => {
+  // selfsigned v5+ exposes generate() as async — await is required, otherwise
+  // we'd get a Promise object instead of the {private, cert} pair.
+  const pems = await selfsigned.generate(attrs, {
+    algorithm: 'sha256',
+    days: 365,
+    keySize: 2048,
+    extensions,
+  });
+
+  if (!pems || !pems.private || !pems.cert) {
+    throw new Error(`selfsigned returned an unexpected shape: ${JSON.stringify(Object.keys(pems || {}))}`);
+  }
+
+  fs.writeFileSync(KEY_FILE, pems.private);
+  fs.writeFileSync(CERT_FILE, pems.cert);
+
+  console.log('Dev TLS cert generated:');
+  console.log(`  Key:  ${KEY_FILE}`);
+  console.log(`  Cert: ${CERT_FILE}`);
+  console.log('\nAdd these lines to backend/.env then restart the server:');
+  console.log('  HTTPS_KEY_PATH=./certs/dev-key.pem');
+  console.log('  HTTPS_CERT_PATH=./certs/dev-cert.pem');
+  console.log('\nVerify TLS 1.3 with:');
+  console.log('  curl --insecure --tlsv1.3 https://localhost:3000/api/health');
+};
+
+main().catch((err) => {
+  console.error('Cert generation failed:', err.message || err);
+  process.exit(1);
 });
-
-fs.writeFileSync(KEY_FILE, pems.private);
-fs.writeFileSync(CERT_FILE, pems.cert);
-
-console.log('Dev TLS cert generated:');
-console.log(`  Key:  ${KEY_FILE}`);
-console.log(`  Cert: ${CERT_FILE}`);
-console.log('\nAdd these lines to backend/.env then restart the server:');
-console.log('  HTTPS_KEY_PATH=./certs/dev-key.pem');
-console.log('  HTTPS_CERT_PATH=./certs/dev-cert.pem');
-console.log('\nVerify TLS 1.3 with:');
-console.log('  curl --insecure --tlsv1.3 https://localhost:3000/api/health');

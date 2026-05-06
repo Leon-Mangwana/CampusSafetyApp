@@ -141,18 +141,21 @@ const HeatmapScreen = () => {
   };
 
   const getUserLocation = async () => {
+    setLocationError('');
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setLocationError('Location permission denied — showing default campus view.');
+        setLocationError('Location permission denied — tap “Locate Me” after granting in Settings.');
         return;
       }
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      // High accuracy gives us a much better fix on campus where Balanced
+      // sometimes returns the cell-tower location (CBD, miles away).
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       userCoordsRef.current = coords;
       if (webReady) postToMap({ type: 'userLocation', ...coords });
     } catch (err) {
-      setLocationError('Unable to get location — showing default campus view.');
+      setLocationError('Unable to get location — check GPS is on, then tap “Locate Me”.');
     }
   };
 
@@ -221,6 +224,10 @@ const HeatmapScreen = () => {
             <Text style={styles.locationBannerText}>{locationError}</Text>
           </View>
         )}
+
+        <TouchableOpacity style={styles.locateButton} onPress={getUserLocation}>
+          <Text style={styles.locateButtonText}>Locate Me</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.legendRow}>
@@ -287,6 +294,21 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   locationBannerText: { color: COLORS.white, fontSize: 12, textAlign: 'center', fontWeight: '500' },
+  locateButton: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 24,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  locateButtonText: { color: COLORS.white, fontSize: 13, fontWeight: '700' },
   legendRow: {
     flexDirection: 'row',
     justifyContent: 'center',
