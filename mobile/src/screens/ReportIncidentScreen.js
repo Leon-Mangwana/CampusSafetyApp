@@ -7,6 +7,14 @@ import * as Location from 'expo-location';
 import { COLORS, INCIDENT_TYPES, SEVERITY_LEVELS } from '../constants/theme';
 import { submitIncidentReport } from '../services/api';
 
+// Inline guidance shown under each severity button so reporters pick
+// consistently. Keep these short so the button stays compact on small phones.
+const SEVERITY_HINTS = {
+  low: 'No immediate danger',
+  medium: 'Concerning, not life-threatening',
+  high: 'Active threat / injury',
+};
+
 const ReportIncidentScreen = ({ navigation }) => {
   const [incidentType, setIncidentType] = useState('');
   const [severity, setSeverity] = useState('');
@@ -110,27 +118,41 @@ const ReportIncidentScreen = ({ navigation }) => {
 
         {/* Severity Level */}
         <Text style={styles.label}>Severity Level *</Text>
+        <Text style={styles.severityHelp}>
+          Pick the option that best matches the threat level — this controls who gets notified.
+        </Text>
         <View style={styles.severityRow}>
-          {SEVERITY_LEVELS.map((level) => (
-            <TouchableOpacity
-              key={level.value}
-              style={[
-                styles.severityButton,
-                { borderColor: level.color },
-                severity === level.value && { backgroundColor: level.color },
-              ]}
-              onPress={() => setSeverity(level.value)}
-            >
-              <Text
+          {SEVERITY_LEVELS.map((level) => {
+            const isSelected = severity === level.value;
+            return (
+              <TouchableOpacity
+                key={level.value}
                 style={[
-                  styles.severityText,
-                  { color: severity === level.value ? COLORS.white : level.color },
+                  styles.severityButton,
+                  { borderColor: level.color },
+                  isSelected && { backgroundColor: level.color },
                 ]}
+                onPress={() => setSeverity(level.value)}
               >
-                {level.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Text
+                  style={[
+                    styles.severityText,
+                    { color: isSelected ? COLORS.white : level.color },
+                  ]}
+                >
+                  {level.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.severityHint,
+                    { color: isSelected ? 'rgba(255,255,255,0.9)' : COLORS.textSecondary },
+                  ]}
+                >
+                  {SEVERITY_HINTS[level.value]}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Description */}
@@ -196,16 +218,20 @@ const styles = StyleSheet.create({
   typeChipSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   typeChipText: { fontSize: 13, color: COLORS.text, fontWeight: '500' },
   typeChipTextSelected: { color: COLORS.white },
+  severityHelp: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10, marginTop: -2 },
   severityRow: { flexDirection: 'row', justifyContent: 'space-between' },
   severityButton: {
     flex: 1,
     borderWidth: 2,
     borderRadius: 8,
     paddingVertical: 12,
+    paddingHorizontal: 6,
     alignItems: 'center',
     marginHorizontal: 4,
+    minHeight: 70,
   },
-  severityText: { fontWeight: '600', fontSize: 14 },
+  severityText: { fontWeight: '700', fontSize: 15 },
+  severityHint: { fontSize: 10, fontWeight: '500', marginTop: 4, textAlign: 'center', lineHeight: 13 },
   textArea: {
     borderWidth: 1,
     borderColor: COLORS.border,
