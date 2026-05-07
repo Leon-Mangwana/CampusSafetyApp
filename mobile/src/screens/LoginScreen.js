@@ -9,6 +9,8 @@ import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { getProfile } from '../services/api';
 
+import { isValidEmail } from '../utils/validators';
+
 const ADMIN_ROLES = ['admin', 'security'];
 
 const LoginScreen = ({ navigation }) => {
@@ -19,15 +21,20 @@ const LoginScreen = ({ navigation }) => {
   const { signIn } = useAuth();
 
   const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password.trim()) {
       Alert.alert('Error', 'Please enter both email and password.');
+      return;
+    }
+    if (!isValidEmail(trimmedEmail)) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address (e.g. yourname@university.ac.zw).');
       return;
     }
 
     setLoading(true);
     try {
       // Sign in with Firebase Auth
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, password);
       const idToken = await userCredential.user.getIdToken();
 
       // Fetch the user profile from the backend using the real token

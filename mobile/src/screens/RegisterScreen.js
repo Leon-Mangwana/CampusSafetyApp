@@ -8,6 +8,7 @@ import { auth } from '../services/firebase';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { registerUser, getProfile } from '../services/api';
+import { isValidEmail, isValidPhone } from '../utils/validators';
 
 const RegisterScreen = ({ navigation }) => {
   const { signIn } = useAuth();
@@ -32,8 +33,22 @@ const RegisterScreen = ({ navigation }) => {
   };
 
   const handleRegister = async () => {
-    if (!fullName.trim() || !email.trim() || !phone.trim() || !password.trim()) {
+    const trimmedEmail = email.trim();
+    const trimmedPhone = phone.trim();
+    const trimmedName = fullName.trim();
+
+    if (!trimmedName || !trimmedEmail || !trimmedPhone || !password.trim()) {
       Alert.alert('Error', 'Please fill in all required fields.');
+      return;
+    }
+
+    if (!isValidEmail(trimmedEmail)) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address (e.g. student@university.ac.zw).');
+      return;
+    }
+
+    if (!isValidPhone(trimmedPhone)) {
+      Alert.alert('Invalid Phone Number', 'Please enter a valid phone number (e.g. +263 77 123 4567).');
       return;
     }
 
@@ -59,21 +74,37 @@ const RegisterScreen = ({ navigation }) => {
       return;
     }
 
+    const badContact = emergencyContacts.find((c) => !isValidPhone(c.phone));
+    if (badContact) {
+      Alert.alert(
+        'Invalid Contact Phone',
+        `${badContact.name}'s phone number is invalid. Please use a format like +263 77 123 4567.`
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       // Create user on the backend (Firebase Auth + database)
-      await registerUser({ email, password, fullName, phone, emergencyContacts, role: 'student' });
+      await registerUser({
+        email: trimmedEmail,
+        password,
+        fullName: trimmedName,
+        phone: trimmedPhone,
+        emergencyContacts,
+        role: 'student',
+      });
 
       // Automatically sign in with Firebase Auth
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, password);
       const idToken = await userCredential.user.getIdToken();
 
       const userData = {
         uid: userCredential.user.uid,
-        email,
-        fullName,
+        email: trimmedEmail,
+        fullName: trimmedName,
         role: 'student',
-        phone,
+        phone: trimmedPhone,
         emergencyContacts,
       };
 

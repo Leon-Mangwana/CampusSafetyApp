@@ -6,6 +6,7 @@ import {
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { updateProfile } from '../services/api';
+import { isValidPhone } from '../utils/validators';
 
 const MAX_CONTACTS = 5;
 const MIN_CONTACTS = 3;
@@ -41,6 +42,19 @@ const SettingsScreen = ({ navigation }) => {
   };
 
   const handleSave = async () => {
+    const trimmedName = (fullName || '').trim();
+    const trimmedPhone = (phone || '').trim();
+
+    if (!trimmedName) {
+      Alert.alert('Missing Name', 'Please enter your full name.');
+      return;
+    }
+
+    if (!isValidPhone(trimmedPhone)) {
+      Alert.alert('Invalid Phone Number', 'Please enter a valid phone number (e.g. +263 77 123 4567).');
+      return;
+    }
+
     const emergencyContacts = contacts
       .map((c) => ({ name: (c.name || '').trim(), phone: (c.phone || '').trim() }))
       .filter((c) => c.name && c.phone);
@@ -53,9 +67,18 @@ const SettingsScreen = ({ navigation }) => {
       return;
     }
 
+    const badContact = emergencyContacts.find((c) => !isValidPhone(c.phone));
+    if (badContact) {
+      Alert.alert(
+        'Invalid Contact Phone',
+        `${badContact.name}'s phone number is invalid. Please use a format like +263 77 123 4567.`
+      );
+      return;
+    }
+
     try {
-      await updateProfile({ fullName, phone, emergencyContacts });
-      await updateUser({ fullName, phone, emergencyContacts });
+      await updateProfile({ fullName: trimmedName, phone: trimmedPhone, emergencyContacts });
+      await updateUser({ fullName: trimmedName, phone: trimmedPhone, emergencyContacts });
       setEditing(false);
       Alert.alert('Success', 'Profile updated successfully.');
     } catch (error) {
@@ -98,12 +121,16 @@ const SettingsScreen = ({ navigation }) => {
               <Text style={styles.fieldLabel}>Full Name</Text>
               <TextInput
                 style={styles.input}
+                placeholder="e.g. Leon Mangwana"
+                placeholderTextColor={COLORS.grey}
                 value={fullName}
                 onChangeText={setFullName}
               />
               <Text style={styles.fieldLabel}>Phone Number</Text>
               <TextInput
                 style={styles.input}
+                placeholder="+263 77 123 4567"
+                placeholderTextColor={COLORS.grey}
                 value={phone}
                 onChangeText={setPhone}
                 keyboardType="phone-pad"
@@ -124,14 +151,14 @@ const SettingsScreen = ({ navigation }) => {
                   </View>
                   <TextInput
                     style={styles.input}
-                    placeholder="Name"
+                    placeholder="Name (e.g. Mum, Roommate)"
                     placeholderTextColor={COLORS.grey}
                     value={c.name}
                     onChangeText={(v) => updateContact(index, 'name', v)}
                   />
                   <TextInput
                     style={[styles.input, { marginTop: 8 }]}
-                    placeholder="+263 7X XXX XXXX"
+                    placeholder="+263 77 123 4567"
                     placeholderTextColor={COLORS.grey}
                     value={c.phone}
                     onChangeText={(v) => updateContact(index, 'phone', v)}
