@@ -9,6 +9,7 @@ import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { registerUser, getProfile } from '../services/api';
 import { isValidEmail, isValidPhone } from '../utils/validators';
+import { friendlyAuthError } from '../utils/authErrors';
 
 const RegisterScreen = ({ navigation }) => {
   const { signIn } = useAuth();
@@ -110,7 +111,10 @@ const RegisterScreen = ({ navigation }) => {
 
       await signIn(idToken, userData);
     } catch (error) {
-      Alert.alert('Registration Failed', error.message || 'Please try again.');
+      Alert.alert(
+        'Registration Failed',
+        friendlyAuthError(error, 'Could not create your account. Please try again.'),
+      );
     } finally {
       setLoading(false);
     }

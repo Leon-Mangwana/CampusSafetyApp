@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { getProfile } from '../services/api';
 
 import { isValidEmail } from '../utils/validators';
+import { friendlyAuthError } from '../utils/authErrors';
 
 const ADMIN_ROLES = ['admin', 'security'];
 
@@ -83,15 +84,7 @@ const LoginScreen = ({ navigation }) => {
 
       await signIn(idToken, userData);
     } catch (error) {
-      let message = 'Invalid email or password.';
-      if (error.code === 'auth/user-not-found') {
-        message = 'No account found with this email. Please register first.';
-      } else if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        message = 'Incorrect password. Please try again.';
-      } else if (error.code === 'auth/too-many-requests') {
-        message = 'Too many failed attempts. Please try again later.';
-      }
-      Alert.alert('Login Failed', message);
+      Alert.alert('Login Failed', friendlyAuthError(error, 'Could not sign in. Please try again.'));
     } finally {
       setLoading(false);
     }
