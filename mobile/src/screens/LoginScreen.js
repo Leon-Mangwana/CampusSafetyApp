@@ -11,6 +11,7 @@ import { getProfile } from '../services/api';
 
 import { isValidEmail } from '../utils/validators';
 import { friendlyAuthError } from '../utils/authErrors';
+import PasswordInput from '../components/PasswordInput';
 
 const ADMIN_ROLES = ['admin', 'security'];
 
@@ -146,13 +147,11 @@ const LoginScreen = ({ navigation }) => {
           />
 
           <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
+          <PasswordInput
             placeholder="Enter your password"
             placeholderTextColor={COLORS.grey}
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
           />
 
           <TouchableOpacity

@@ -185,37 +185,40 @@ const SecurityDashboardScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* Active SOS Alerts */}
-        {sosAlerts.length > 0 && (
-          <>
-            <Text style={styles.sectionTitle}>Active SOS Alerts</Text>
-            {sosAlerts.map((alert) => (
-              <View key={alert.alertId} style={styles.sosCard}>
-                <View style={styles.sosHeader}>
-                  <Text style={styles.sosId}>{alert.alertId}</Text>
-                  <StatusBadge status={alert.status} />
-                </View>
-                <Text style={styles.sosUser}>{alert.userName || 'Unknown'}</Text>
-                <Text style={styles.sosLocation}>
-                  Location: {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
-                </Text>
-                <View style={styles.sosActionRow}>
-                  <TouchableOpacity
-                    style={[styles.respondButton, { flex: 1, marginRight: 6 }]}
-                    onPress={() => handleSOSRespond(alert.alertId)}
-                  >
-                    <Text style={styles.respondButtonText}>Mark Responded</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.mapsButton, { flex: 1, marginLeft: 6 }]}
-                    onPress={() => openInMaps(alert.latitude, alert.longitude, `SOS ${alert.userName || ''}`)}
-                  >
-                    <Text style={styles.mapsButtonText}>Open in Maps</Text>
-                  </TouchableOpacity>
-                </View>
+        {/* Active SOS Alerts — always rendered so the admin can see the
+            section is wired up even when nothing is active right now. */}
+        <Text style={styles.sectionTitle}>Active SOS Alerts</Text>
+        {sosAlerts.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyText}>No active SOS alerts right now.</Text>
+          </View>
+        ) : (
+          sosAlerts.map((alert) => (
+            <View key={alert.alertId} style={styles.sosCard}>
+              <View style={styles.sosHeader}>
+                <Text style={styles.sosId}>{alert.alertId}</Text>
+                <StatusBadge status={alert.status} />
               </View>
-            ))}
-          </>
+              <Text style={styles.sosUser}>{alert.userName || 'Unknown'}</Text>
+              <Text style={styles.sosLocation}>
+                Location: {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
+              </Text>
+              <View style={styles.sosActionRow}>
+                <TouchableOpacity
+                  style={[styles.respondButton, { flex: 1, marginRight: 6 }]}
+                  onPress={() => handleSOSRespond(alert.alertId)}
+                >
+                  <Text style={styles.respondButtonText}>Mark Responded</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.mapsButton, { flex: 1, marginLeft: 6 }]}
+                  onPress={() => openInMaps(alert.latitude, alert.longitude, `SOS ${alert.userName || ''}`)}
+                >
+                  <Text style={styles.mapsButtonText}>Open in Maps</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
         )}
 
         {/* Recent Incidents */}
@@ -315,6 +318,12 @@ const styles = StyleSheet.create({
     padding: 10, alignItems: 'center', marginTop: 8,
   },
   respondButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
+  emptyCard: {
+    backgroundColor: COLORS.white, borderRadius: 12, padding: 14,
+    marginBottom: 8, borderWidth: 1, borderColor: COLORS.border,
+    alignItems: 'center',
+  },
+  emptyText: { color: COLORS.textSecondary, fontSize: 13 },
   incidentCard: {
     backgroundColor: COLORS.white, borderRadius: 12,
     padding: 14, marginBottom: 8, elevation: 1,

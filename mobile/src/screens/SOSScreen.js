@@ -38,14 +38,18 @@ const SOSScreen = ({ navigation }) => {
       );
       pulse.start();
 
-      // Update location every 10 seconds
+      // Update location every 10 seconds. The whole callback is wrapped in
+      // try/catch so a transient GPS failure ("Current location is
+      // unavailable") never bubbles up as an unhandled promise rejection.
       locationInterval.current = setInterval(async () => {
-        const loc = await Location.getCurrentPositionAsync({});
-        if (alertId) {
-          try {
-            await updateSOSLocation(alertId, loc.coords.latitude, loc.coords.longitude);
-          } catch (e) { /* continue tracking */ }
-        }
+        if (!alertId) return;
+        try {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          await updateSOSLocation(alertId, loc.coords.latitude, loc.coords.longitude);
+          setLocation(loc.coords);
+        } catch (e) { /* continue tracking */ }
       }, 10000);
 
       return () => {
@@ -115,11 +119,26 @@ const SOSScreen = ({ navigation }) => {
     Vibration.vibrate([200, 100, 200]);
     setIsActive(true);
 
-    try {
-      if (!location) await getLocation();
-      const lat = location?.latitude || -19.4519;
-      const lng = location?.longitude || 29.8146;
+    // Resolve coords from fresh GPS rather than relying on React state, which
+    // can still be null on the first activation if getLocation() has just
+    // been called (state updates are async and won't be visible here).
+    let coords = location;
+    if (!coords) {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          coords = loc.coords;
+          setLocation(loc.coords);
+        }
+      } catch { /* fall through to defaults */ }
+    }
+    const lat = coords?.latitude ?? -19.4519;
+    const lng = coords?.longitude ?? 29.8146;
 
+    try {
       // Fire backend alert and SMS deep-link in parallel for lowest latency.
       const [result] = await Promise.all([
         triggerSOS(lat, lng),
@@ -127,7 +146,10 @@ const SOSScreen = ({ navigation }) => {
       ]);
       setAlertId(result.alertId);
     } catch (error) {
-      Alert.alert('SOS Error', 'Failed to send SOS. Please call security directly.');
+      Alert.alert(
+        'SOS Error',
+        `Failed to send SOS to security: ${error?.message || 'unknown error'}. Please call security directly.`
+      );
     }
   };
 

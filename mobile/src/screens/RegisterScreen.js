@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { registerUser, getProfile } from '../services/api';
 import { isValidEmail, isValidPhone } from '../utils/validators';
 import { friendlyAuthError } from '../utils/authErrors';
+import PasswordInput from '../components/PasswordInput';
 
 const RegisterScreen = ({ navigation }) => {
   const { signIn } = useAuth();
@@ -189,23 +190,19 @@ const RegisterScreen = ({ navigation }) => {
           ))}
 
           <Text style={styles.label}>Password *</Text>
-          <TextInput
-            style={styles.input}
+          <PasswordInput
             placeholder="Minimum 6 characters"
             placeholderTextColor={COLORS.grey}
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
           />
 
           <Text style={styles.label}>Confirm Password *</Text>
-          <TextInput
-            style={styles.input}
+          <PasswordInput
             placeholder="Re-enter your password"
             placeholderTextColor={COLORS.grey}
             value={confirmPassword}
             onChangeText={setConfirmPassword}
-            secureTextEntry
           />
 
           <TouchableOpacity
