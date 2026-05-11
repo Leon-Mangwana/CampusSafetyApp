@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Alert, ActivityIndicator, SafeAreaView,
@@ -6,22 +6,37 @@ import {
 import * as Location from 'expo-location';
 import { COLORS, INCIDENT_TYPES, SEVERITY_LEVELS } from '../constants/theme';
 import { submitIncidentReport } from '../services/api';
+import { classifySeverity, isLikelyEnglish } from '../utils/severityClassifier';
 
-// Inline guidance shown under each severity button so reporters pick
-// consistently. Keep these short so the button stays compact on small phones.
+// Short rationale shown next to the auto-detected severity so the reporter
+// understands what the system inferred.
 const SEVERITY_HINTS = {
   low: 'No immediate danger',
   medium: 'Concerning, not life-threatening',
-  high: 'Active threat / injury',
+  high: 'Active threat / injury — security alerted',
 };
+
+const SEVERITY_LABEL = { low: 'Low', medium: 'Medium', high: 'High' };
 
 const ReportIncidentScreen = ({ navigation }) => {
   const [incidentType, setIncidentType] = useState('');
-  const [severity, setSeverity] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState(null);
   const [locationText, setLocationText] = useState('Detecting location...');
   const [loading, setLoading] = useState(false);
+
+  // Severity is derived, never picked by the student. It updates live as the
+  // user types or changes incident type. We still show it so the reporter
+  // can see how the system read their report.
+  const severity = useMemo(
+    () => classifySeverity(description, incidentType),
+    [description, incidentType]
+  );
+  const severityColor = useMemo(() => {
+    const entry = SEVERITY_LEVELS.find((s) => s.value === severity);
+    return entry?.color || COLORS.grey;
+  }, [severity]);
+  const hasEnoughText = description.trim().length >= 10;
 
   useEffect(() => {
     getLocation();
@@ -47,12 +62,15 @@ const ReportIncidentScreen = ({ navigation }) => {
       Alert.alert('Error', 'Please select an incident type.');
       return;
     }
-    if (!severity) {
-      Alert.alert('Error', 'Please select severity level.');
-      return;
-    }
     if (!description.trim() || description.trim().length < 10) {
       Alert.alert('Error', 'Please provide a description (at least 10 characters).');
+      return;
+    }
+    if (!isLikelyEnglish(description)) {
+      Alert.alert(
+        'Description must be in English',
+        'Please write your incident description in English so the system can classify it correctly and so security staff can act on it quickly.'
+      );
       return;
     }
     if (!location) {
@@ -116,50 +134,15 @@ const ReportIncidentScreen = ({ navigation }) => {
           ))}
         </ScrollView>
 
-        {/* Severity Level */}
-        <Text style={styles.label}>Severity Level *</Text>
-        <Text style={styles.severityHelp}>
-          Pick the option that best matches the threat level — this controls who gets notified.
-        </Text>
-        <View style={styles.severityRow}>
-          {SEVERITY_LEVELS.map((level) => {
-            const isSelected = severity === level.value;
-            return (
-              <TouchableOpacity
-                key={level.value}
-                style={[
-                  styles.severityButton,
-                  { borderColor: level.color },
-                  isSelected && { backgroundColor: level.color },
-                ]}
-                onPress={() => setSeverity(level.value)}
-              >
-                <Text
-                  style={[
-                    styles.severityText,
-                    { color: isSelected ? COLORS.white : level.color },
-                  ]}
-                >
-                  {level.label}
-                </Text>
-                <Text
-                  style={[
-                    styles.severityHint,
-                    { color: isSelected ? 'rgba(255,255,255,0.9)' : COLORS.textSecondary },
-                  ]}
-                >
-                  {SEVERITY_HINTS[level.value]}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Description */}
+        {/* Description (drives auto-classification, so show it before the
+            detected severity) */}
         <Text style={styles.label}>Description *</Text>
+        <Text style={styles.severityHelp}>
+          Describe what happened in English — the system will classify the severity for you.
+        </Text>
         <TextInput
           style={styles.textArea}
-          placeholder="Describe the incident..."
+          placeholder="e.g. I saw someone breaking a window at the library entrance..."
           placeholderTextColor={COLORS.grey}
           value={description}
           onChangeText={setDescription}
@@ -167,6 +150,28 @@ const ReportIncidentScreen = ({ navigation }) => {
           numberOfLines={4}
           textAlignVertical="top"
         />
+
+        {/* Auto-detected severity (read-only) */}
+        <Text style={styles.label}>Detected Severity</Text>
+        <View
+          style={[
+            styles.severityBadge,
+            {
+              borderColor: hasEnoughText ? severityColor : COLORS.border,
+              backgroundColor: hasEnoughText ? severityColor + '15' : COLORS.greyLight,
+            },
+          ]}
+        >
+          <View style={[styles.severityDot, { backgroundColor: hasEnoughText ? severityColor : COLORS.grey }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.severityBadgeText, { color: hasEnoughText ? severityColor : COLORS.textSecondary }]}>
+              {hasEnoughText ? SEVERITY_LABEL[severity] : 'Awaiting description...'}
+            </Text>
+            <Text style={styles.severityBadgeHint}>
+              {hasEnoughText ? SEVERITY_HINTS[severity] : 'Severity is auto-detected from your description.'}
+            </Text>
+          </View>
+        </View>
 
         {/* Location */}
         <Text style={styles.label}>Location</Text>
@@ -219,19 +224,19 @@ const styles = StyleSheet.create({
   typeChipText: { fontSize: 13, color: COLORS.text, fontWeight: '500' },
   typeChipTextSelected: { color: COLORS.white },
   severityHelp: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10, marginTop: -2 },
-  severityRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  severityButton: {
-    flex: 1,
-    borderWidth: 2,
+  severityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
     borderRadius: 8,
     paddingVertical: 12,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    marginHorizontal: 4,
-    minHeight: 70,
+    paddingHorizontal: 14,
   },
-  severityText: { fontWeight: '700', fontSize: 15 },
-  severityHint: { fontSize: 10, fontWeight: '500', marginTop: 4, textAlign: 'center', lineHeight: 13 },
+  severityDot: {
+    width: 12, height: 12, borderRadius: 6, marginRight: 12,
+  },
+  severityBadgeText: { fontSize: 15, fontWeight: '700' },
+  severityBadgeHint: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
   textArea: {
     borderWidth: 1,
     borderColor: COLORS.border,

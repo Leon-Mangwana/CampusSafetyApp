@@ -1,6 +1,7 @@
 {
   "rules": {
     "users": {
+      ".indexOn": ["role"],
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
         ".write": "auth != null && auth.uid === $uid",
@@ -12,6 +13,7 @@
     "incidents": {
       ".read": "auth != null",
       ".write": "auth != null",
+      ".indexOn": ["timestamp", "type", "status"],
       "$incidentId": {
         "status": {
           ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
@@ -21,13 +23,15 @@
     "sosAlerts": {
       ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
       ".write": "auth != null",
+      ".indexOn": ["timestamp", "status", "userId"],
       "$alertId": {
         ".read": "auth != null && (data.child('userId').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'security' || root.child('users').child(auth.uid).child('role').val() === 'admin')"
       }
     },
     "notifications": {
-      "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
+      ".indexOn": ["recipientId", "timestamp"],
+      "$notificationId": {
+        ".read": "auth != null && data.child('recipientId').val() === auth.uid",
         ".write": "auth != null"
       }
     },
