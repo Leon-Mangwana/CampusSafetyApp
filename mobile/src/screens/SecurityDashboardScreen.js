@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet,
   RefreshControl, SafeAreaView, ScrollView, Linking, Platform, Alert,
 } from 'react-native';
-import { COLORS } from '../constants/theme';
+import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, deleteIncident, resolveSOSAlert } from '../services/api';
 
 const REFRESH_INTERVAL_MS = 10000;
@@ -89,7 +89,14 @@ const SecurityDashboardScreen = ({ navigation }) => {
         { incidentId: 'INC-045', type: 'unauthorized_access', description: 'Science Building', timestamp: new Date().toISOString(), severity: 'high', status: 'resolved' },
       ]);
       setSosAlerts([
-        { alertId: 'SOS-003', userName: 'Student', latitude: -19.4515, longitude: 29.8140, status: 'active', timestamp: new Date(Date.now() - 120000).toISOString() },
+        {
+          alertId: 'SOS-003',
+          userName: 'Student',
+          latitude: DEFAULT_CAMPUS.latitude + 0.0008,
+          longitude: DEFAULT_CAMPUS.longitude + 0.0006,
+          status: 'active',
+          timestamp: new Date(Date.now() - 120000).toISOString(),
+        },
       ]);
     }
   };

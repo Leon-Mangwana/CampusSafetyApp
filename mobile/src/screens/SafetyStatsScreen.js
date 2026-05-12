@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, ActivityIndicator, SafeAreaView,
+  TouchableOpacity,
 } from 'react-native';
-import { COLORS } from '../constants/theme';
+import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getIncidentStats } from '../services/api';
 
 const StatCard = ({ value, label, color }) => (
@@ -12,7 +13,7 @@ const StatCard = ({ value, label, color }) => (
   </View>
 );
 
-const SafetyStatsScreen = () => {
+const SafetyStatsScreen = ({ navigation }) => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -35,9 +36,13 @@ const SafetyStatsScreen = () => {
         sosAlertsHandled: 15,
         byType: { theft: 42, harassment: 30, assault: 21, unauthorized_access: 18, vandalism: 16 },
         bySeverity: { high: 36, medium: 57, low: 34 },
+        // Demo hotspots are anchored to MSU main campus (DEFAULT_CAMPUS),
+        // offset by a few hundred metres so they fall on plausible on-campus
+        // locations (library, hostels, walkways) rather than Gweru CBD.
         hotspots: [
-          { latitude: -19.4515, longitude: 29.8140, count: 23, types: { theft: 15, vandalism: 8 } },
-          { latitude: -19.4525, longitude: 29.8155, count: 18, types: { harassment: 12, assault: 6 } },
+          { latitude: DEFAULT_CAMPUS.latitude + 0.0008, longitude: DEFAULT_CAMPUS.longitude + 0.0006, count: 23, types: { theft: 15, vandalism: 8 } },
+          { latitude: DEFAULT_CAMPUS.latitude - 0.0009, longitude: DEFAULT_CAMPUS.longitude - 0.0004, count: 18, types: { harassment: 12, assault: 6 } },
+          { latitude: DEFAULT_CAMPUS.latitude + 0.0004, longitude: DEFAULT_CAMPUS.longitude - 0.0010, count: 11, types: { suspicious_activity: 7, theft: 4 } },
         ],
       });
     } finally {
@@ -124,10 +129,23 @@ const SafetyStatsScreen = () => {
           )}
         </View>
 
-        {/* Top Hotspots */}
+        {/* Top Hotspots — tap any row to open the heatmap zoomed to that spot. */}
         <Text style={styles.sectionTitle}>Top Safety Hotspots</Text>
+        <Text style={styles.sectionHint}>Tap a hotspot to view it on the map.</Text>
         {stats.hotspots && stats.hotspots.map((spot, idx) => (
-          <View key={idx} style={styles.hotspotRow}>
+          <TouchableOpacity
+            key={idx}
+            style={styles.hotspotRow}
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('MainTabs', {
+              screen: 'Heatmap',
+              params: {
+                focusLat: spot.latitude,
+                focusLng: spot.longitude,
+                focusCount: spot.count,
+              },
+            })}
+          >
             <View style={styles.rankBadge}>
               <Text style={styles.rankText}>#{idx + 1}</Text>
             </View>
@@ -137,7 +155,8 @@ const SafetyStatsScreen = () => {
               </Text>
               <Text style={styles.hotspotCount}>{spot.count} incidents</Text>
             </View>
-          </View>
+            <Text style={styles.hotspotChevron}>›</Text>
+          </TouchableOpacity>
         ))}
 
         <Text style={styles.reportFooter}>
@@ -211,6 +230,10 @@ const styles = StyleSheet.create({
   hotspotInfo: { flex: 1 },
   hotspotCoords: { fontSize: 14, fontWeight: '500', color: COLORS.text },
   hotspotCount: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  hotspotChevron: { fontSize: 22, color: COLORS.grey, marginLeft: 8 },
+  sectionHint: {
+    fontSize: 12, color: COLORS.textSecondary, marginTop: -8, marginBottom: 8,
+  },
   reportFooter: {
     fontSize: 11,
     color: COLORS.grey,

@@ -42,6 +42,7 @@ const buildLeafletHtml = (initialLat, initialLng) => `
 
     let circles = [];
     let userMarker = null;
+    let focusMarker = null;
 
     const colorFor = (weight) => {
       if (weight >= 3) return '#F44336';
@@ -69,11 +70,24 @@ const buildLeafletHtml = (initialLat, initialLng) => `
       map.setView([lat, lng], 16);
     };
 
+    const focusOn = (lat, lng, count) => {
+      if (focusMarker) map.removeLayer(focusMarker);
+      focusMarker = L.circleMarker([lat, lng], {
+        radius: 14, color: '#D32F2F', fillColor: '#D32F2F',
+        fillOpacity: 0.5, weight: 3,
+      }).addTo(map);
+      if (typeof count === 'number') {
+        focusMarker.bindPopup('Hotspot: ' + count + ' incidents').openPopup();
+      }
+      map.setView([lat, lng], 18);
+    };
+
     const handleMessage = (raw) => {
       try {
         const msg = JSON.parse(raw);
         if (msg.type === 'points') renderPoints(msg.points || []);
         if (msg.type === 'userLocation') setUserLocation(msg.latitude, msg.longitude);
+        if (msg.type === 'focus') focusOn(msg.latitude, msg.longitude, msg.count);
       } catch (e) {}
     };
 
@@ -84,7 +98,7 @@ const buildLeafletHtml = (initialLat, initialLng) => `
 </html>
 `;
 
-const HeatmapScreen = () => {
+const HeatmapScreen = ({ route, navigation }) => {
   const [activeFilter, setActiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
@@ -94,6 +108,9 @@ const HeatmapScreen = () => {
   const filterRef = useRef(activeFilter);
   const userCoordsRef = useRef(null);
   const pendingPointsRef = useRef([]);
+  // Stores the hotspot the user tapped on the Safety Stats screen so we can
+  // re-apply the focus once the WebView's Leaflet runtime is ready.
+  const focusRef = useRef(null);
 
   // Build the HTML once. DEFAULT_CAMPUS keeps the initial view sensible
   // before the user's GPS fix arrives.
@@ -119,7 +136,25 @@ const HeatmapScreen = () => {
     if (pendingPointsRef.current.length > 0) {
       postToMap({ type: 'points', points: pendingPointsRef.current });
     }
+    if (focusRef.current) {
+      postToMap({ type: 'focus', ...focusRef.current });
+    }
   }, [webReady]);
+
+  // Pick up incoming focus params from the Safety Stats screen. Buffered in a
+  // ref because the WebView may not be ready yet on first navigation. Cleared
+  // from route state so a back-and-forth doesn't re-focus stale coords.
+  useEffect(() => {
+    const { focusLat, focusLng, focusCount } = route?.params || {};
+    if (focusLat == null || focusLng == null) return;
+    focusRef.current = {
+      latitude: focusLat,
+      longitude: focusLng,
+      count: focusCount,
+    };
+    if (webReady) postToMap({ type: 'focus', ...focusRef.current });
+    navigation?.setParams?.({ focusLat: undefined, focusLng: undefined, focusCount: undefined });
+  }, [route?.params?.focusLat, route?.params?.focusLng, webReady]);
 
   const postToMap = (payload) => {
     if (!webRef.current) return;
