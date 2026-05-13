@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView,
-  Animated, SafeAreaView, Vibration, Linking, Platform,
+  Animated, SafeAreaView, Vibration, Linking, Platform, ActivityIndicator,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { COLORS } from '../constants/theme';
@@ -15,6 +15,11 @@ const SOSScreen = ({ navigation }) => {
   const [location, setLocation] = useState(null);
   const [holdProgress, setHoldProgress] = useState(0);
   const [gpsSignal, setGpsSignal] = useState('Detecting...');
+  // Backend status separate from isActive: the red screen shows the moment
+  // the user releases the hold, but security only counts as "notified" once
+  // triggerSOS resolves with an alertId. Possible values: 'pending' |
+  // 'notified' | 'failed'.
+  const [backendStatus, setBackendStatus] = useState('pending');
   const holdTimer = useRef(null);
   const locationInterval = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -116,9 +121,29 @@ const SOSScreen = ({ navigation }) => {
     } catch { /* ignore — backend still logs */ }
   };
 
+  // Retries the backend trigger up to 3 times with exponential backoff so a
+  // transient network blip during an SOS doesn't permanently lose the alert.
+  const triggerWithRetry = async (lat, lng, attempts = 3) => {
+    let lastError;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await triggerSOS(lat, lng);
+      } catch (err) {
+        lastError = err;
+        // Don't retry rate-limit errors — the server has made a decision.
+        if (err?.message?.toLowerCase().includes('too many')) break;
+        if (i < attempts - 1) {
+          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, i)));
+        }
+      }
+    }
+    throw lastError;
+  };
+
   const activateSOS = async () => {
     Vibration.vibrate([200, 100, 200]);
     setIsActive(true);
+    setBackendStatus('pending');
 
     // Resolve coords from fresh GPS rather than relying on React state, which
     // can still be null on the first activation if getLocation() has just
@@ -139,18 +164,32 @@ const SOSScreen = ({ navigation }) => {
     const lat = coords?.latitude ?? -19.4519;
     const lng = coords?.longitude ?? 29.8146;
 
+    // Open SMS deep-link in parallel with the backend trigger so emergency
+    // contacts get the message even if the backend call has to retry.
+    openSmsToContacts(lat, lng).catch(() => {});
+
     try {
-      // Fire backend alert and SMS deep-link in parallel for lowest latency.
-      const [result] = await Promise.all([
-        triggerSOS(lat, lng),
-        openSmsToContacts(lat, lng),
-      ]);
+      const result = await triggerWithRetry(lat, lng);
       setAlertId(result.alertId);
+      setBackendStatus('notified');
     } catch (error) {
+      setBackendStatus('failed');
       Alert.alert(
-        'SOS Error',
-        `Failed to send SOS to security: ${error?.message || 'unknown error'}. Please call security directly.`
+        'Security Could Not Be Reached',
+        `${error?.message || 'Connection failed'}. Your emergency contacts may still have been alerted by SMS. Please call security directly: 911.`
       );
+    }
+  };
+
+  const retryTrigger = async () => {
+    if (!location) return;
+    setBackendStatus('pending');
+    try {
+      const result = await triggerWithRetry(location.latitude, location.longitude);
+      setAlertId(result.alertId);
+      setBackendStatus('notified');
+    } catch (error) {
+      setBackendStatus('failed');
     }
   };
 
@@ -178,6 +217,7 @@ const SOSScreen = ({ navigation }) => {
           }
           setIsActive(false);
           setAlertId(null);
+          setBackendStatus('pending');
           setHoldProgress(0);
           clearInterval(locationInterval.current);
         },
@@ -195,6 +235,36 @@ const SOSScreen = ({ navigation }) => {
           <Text style={styles.activeCircleText}>SOS</Text>
           <Text style={styles.activeCircleSubtext}>ACTIVE</Text>
         </Animated.View>
+
+        {/* Backend connection status — shows the user (and demonstrator)
+            whether security has actually received the alert. */}
+        <View
+          style={[
+            styles.backendStatus,
+            backendStatus === 'notified' && { backgroundColor: 'rgba(76, 175, 80, 0.25)' },
+            backendStatus === 'failed' && { backgroundColor: 'rgba(255, 235, 59, 0.25)' },
+          ]}
+        >
+          {backendStatus === 'pending' && (
+            <>
+              <ActivityIndicator color={COLORS.white} size="small" style={{ marginRight: 8 }} />
+              <Text style={styles.backendStatusText}>Notifying campus security…</Text>
+            </>
+          )}
+          {backendStatus === 'notified' && (
+            <Text style={styles.backendStatusText}>✓ Security notified — alert {alertId?.slice(0, 8)}</Text>
+          )}
+          {backendStatus === 'failed' && (
+            <>
+              <Text style={[styles.backendStatusText, { flex: 1 }]}>
+                ⚠ Could not reach security
+              </Text>
+              <TouchableOpacity onPress={retryTrigger} style={styles.retryButton}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
 
         <View style={styles.infoBox}>
           <Text style={styles.infoText}>Your real-time location is being shared with:</Text>
@@ -387,6 +457,18 @@ const styles = StyleSheet.create({
   },
   callBtnText: { color: COLORS.white, fontSize: 14, fontWeight: '700' },
   callBtnNumber: { color: 'rgba(255,255,255,0.8)', fontSize: 13, marginTop: 2 },
+  backendStatus: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 8, marginHorizontal: 24, marginBottom: 16,
+    paddingVertical: 10, paddingHorizontal: 14,
+  },
+  backendStatusText: { color: COLORS.white, fontSize: 13, fontWeight: '600' },
+  retryButton: {
+    backgroundColor: COLORS.white,
+    paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6,
+  },
+  retryButtonText: { color: COLORS.danger, fontSize: 13, fontWeight: '700' },
   // Call buttons (inactive / pre-SOS)
   callSecurityBtnInactive: {
     flex: 1,

@@ -6,7 +6,7 @@ import {
 import * as Location from 'expo-location';
 import { COLORS, INCIDENT_TYPES, SEVERITY_LEVELS } from '../constants/theme';
 import { submitIncidentReport } from '../services/api';
-import { classifySeverity, isLikelyEnglish } from '../utils/severityClassifier';
+import { classifySeverity, isLikelyEnglish, seemsLikeIncidentDescription } from '../utils/severityClassifier';
 
 // Short rationale shown next to the auto-detected severity so the reporter
 // understands what the system inferred.
@@ -37,6 +37,18 @@ const ReportIncidentScreen = ({ navigation }) => {
     return entry?.color || COLORS.grey;
   }, [severity]);
   const hasEnoughText = description.trim().length >= 10;
+  const isEnglish = useMemo(() => isLikelyEnglish(description), [description]);
+  const looksLikeIncident = useMemo(
+    () => seemsLikeIncidentDescription(description),
+    [description]
+  );
+  const showLanguageError = hasEnoughText && !isEnglish;
+  // Only show the off-topic warning when the text *is* English — otherwise
+  // the language error is the more important problem to fix first.
+  const showOffTopicWarning = hasEnoughText && isEnglish && !looksLikeIncident;
+  // The severity badge is only meaningful for a valid English on-topic
+  // description; otherwise grey it out.
+  const severityIsValid = hasEnoughText && isEnglish;
 
   useEffect(() => {
     getLocation();
@@ -141,7 +153,7 @@ const ReportIncidentScreen = ({ navigation }) => {
           Describe what happened in English — the system will classify the severity for you.
         </Text>
         <TextInput
-          style={styles.textArea}
+          style={[styles.textArea, showLanguageError && styles.textAreaError]}
           placeholder="e.g. I saw someone breaking a window at the library entrance..."
           placeholderTextColor={COLORS.grey}
           value={description}
@@ -150,6 +162,11 @@ const ReportIncidentScreen = ({ navigation }) => {
           numberOfLines={4}
           textAlignVertical="top"
         />
+        {showLanguageError && (
+          <Text style={styles.languageError}>
+            ⚠ Please use English language only.
+          </Text>
+        )}
 
         {/* Auto-detected severity (read-only) */}
         <Text style={styles.label}>Detected Severity</Text>
@@ -157,21 +174,37 @@ const ReportIncidentScreen = ({ navigation }) => {
           style={[
             styles.severityBadge,
             {
-              borderColor: hasEnoughText ? severityColor : COLORS.border,
-              backgroundColor: hasEnoughText ? severityColor + '15' : COLORS.greyLight,
+              borderColor: severityIsValid ? severityColor : COLORS.border,
+              backgroundColor: severityIsValid ? severityColor + '15' : COLORS.greyLight,
             },
           ]}
         >
-          <View style={[styles.severityDot, { backgroundColor: hasEnoughText ? severityColor : COLORS.grey }]} />
+          <View style={[styles.severityDot, { backgroundColor: severityIsValid ? severityColor : COLORS.grey }]} />
           <View style={{ flex: 1 }}>
-            <Text style={[styles.severityBadgeText, { color: hasEnoughText ? severityColor : COLORS.textSecondary }]}>
-              {hasEnoughText ? SEVERITY_LABEL[severity] : 'Awaiting description...'}
+            <Text style={[styles.severityBadgeText, { color: severityIsValid ? severityColor : COLORS.textSecondary }]}>
+              {!hasEnoughText
+                ? 'Awaiting description...'
+                : !isEnglish
+                  ? 'Awaiting English description...'
+                  : SEVERITY_LABEL[severity]}
             </Text>
             <Text style={styles.severityBadgeHint}>
-              {hasEnoughText ? SEVERITY_HINTS[severity] : 'Severity is auto-detected from your description.'}
+              {severityIsValid
+                ? SEVERITY_HINTS[severity]
+                : 'Severity is auto-detected once a valid English description is provided.'}
             </Text>
           </View>
         </View>
+
+        {showOffTopicWarning && (
+          <View style={styles.offTopicBanner}>
+            <Text style={styles.offTopicText}>
+              ⚠ Your description doesn't appear to describe a specific incident.
+              Please mention what happened (e.g. "I saw someone breaking a window
+              at the library"). Off-topic descriptions are classified as Low.
+            </Text>
+          </View>
+        )}
 
         {/* Location */}
         <Text style={styles.label}>Location</Text>
@@ -237,6 +270,11 @@ const styles = StyleSheet.create({
   },
   severityBadgeText: { fontSize: 15, fontWeight: '700' },
   severityBadgeHint: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
+  offTopicBanner: {
+    backgroundColor: '#FFF3CD', borderRadius: 8, padding: 12,
+    borderLeftWidth: 4, borderLeftColor: COLORS.warning, marginTop: 10,
+  },
+  offTopicText: { color: '#856404', fontSize: 12, lineHeight: 17, fontWeight: '500' },
   textArea: {
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -246,6 +284,16 @@ const styles = StyleSheet.create({
     minHeight: 100,
     backgroundColor: COLORS.greyLight,
     color: COLORS.text,
+  },
+  textAreaError: {
+    borderColor: COLORS.danger,
+    borderWidth: 1.5,
+  },
+  languageError: {
+    color: COLORS.danger,
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 6,
   },
   locationBox: {
     flexDirection: 'row',

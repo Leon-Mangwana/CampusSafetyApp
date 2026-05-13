@@ -63,8 +63,10 @@ const SecurityDashboardScreen = ({ navigation }) => {
   const [stats, setStats] = useState({ total: 0, pending: 0, active: 0, resolved: 0 });
   const [incidents, setIncidents] = useState([]);
   const [sosAlerts, setSosAlerts] = useState([]);
+  const [recentSos, setRecentSos] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState('');
+  const [sosFetchError, setSosFetchError] = useState(null);
   // Used to re-render the "Updated Xs ago" labels every second so they
   // appear to tick in real time.
   const [, setTick] = useState(0);
@@ -88,15 +90,26 @@ const SecurityDashboardScreen = ({ navigation }) => {
 
   const fetchAll = async ({ silent = false } = {}) => {
     try {
+      // Fetch ALL SOS records (no status filter) and let the dashboard
+      // decide what's active. This bypasses any server-side filter quirk
+      // and lets the admin see resolved/closed history at a glance.
       const [statsData, incData, sosData] = await Promise.allSettled([
         getIncidentStats(),
         getIncidents({ limit: 20 }),
-        getSOSAlerts('active'),
+        getSOSAlerts(),
       ]);
       if (!mountedRef.current) return;
       if (statsData.status === 'fulfilled') setStats(statsData.value);
       if (incData.status === 'fulfilled') setIncidents(incData.value.incidents || []);
-      if (sosData.status === 'fulfilled') setSosAlerts(sosData.value.alerts || []);
+      if (sosData.status === 'fulfilled') {
+        const all = sosData.value.alerts || [];
+        const active = all.filter((a) => a.status === 'active');
+        setSosAlerts(active);
+        setRecentSos(all.filter((a) => a.status !== 'active').slice(0, 5));
+        setSosFetchError(null);
+      } else {
+        setSosFetchError(sosData.reason?.message || 'Failed to load SOS alerts');
+      }
       setLastUpdated(new Date().toLocaleTimeString());
     } catch {
       if (silent) return;
@@ -214,6 +227,14 @@ const SecurityDashboardScreen = ({ navigation }) => {
         {/* Active SOS Alerts — always rendered so the admin can see the
             section is wired up even when nothing is active right now. */}
         <Text style={styles.sectionTitle}>Active SOS Alerts</Text>
+        {sosFetchError && (
+          <View style={styles.sosErrorBanner}>
+            <Text style={styles.sosErrorText}>
+              ⚠ Cannot fetch SOS alerts — the list below may be out of date. Pull down to retry.
+            </Text>
+            <Text style={styles.sosErrorDetail}>{sosFetchError}</Text>
+          </View>
+        )}
         {sosAlerts.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyText}>No active SOS alerts right now.</Text>
@@ -309,6 +330,26 @@ const SecurityDashboardScreen = ({ navigation }) => {
             </View>
           </View>
         ))}
+
+        {/* Recent SOS history — at the bottom because it's reference data,
+            not actionable. Active alerts and incidents remain prominent. */}
+        {recentSos.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>Recent SOS History</Text>
+            {recentSos.map((alert) => (
+              <View key={alert.alertId} style={styles.historyCard}>
+                <View style={styles.sosHeader}>
+                  <Text style={styles.historyId}>{alert.alertId?.slice(0, 8)}</Text>
+                  <StatusBadge status={alert.status} />
+                </View>
+                <Text style={styles.historyUser}>{alert.userName || 'Unknown'}</Text>
+                <Text style={styles.historyTime}>
+                  {new Date(alert.timestamp).toLocaleString()}
+                </Text>
+              </View>
+            ))}
+          </>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -381,6 +422,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   emptyText: { color: COLORS.textSecondary, fontSize: 13 },
+  sosErrorBanner: {
+    backgroundColor: '#FFF3CD', borderRadius: 8, padding: 12,
+    borderLeftWidth: 4, borderLeftColor: COLORS.warning,
+    marginBottom: 8,
+  },
+  sosErrorText: { color: '#856404', fontSize: 13, fontWeight: '600' },
+  sosErrorDetail: { color: '#856404', fontSize: 11, marginTop: 4, opacity: 0.8 },
+  historyCard: {
+    backgroundColor: COLORS.white, borderRadius: 10, padding: 12,
+    marginBottom: 6, borderLeftWidth: 3, borderLeftColor: COLORS.grey,
+  },
+  historyId: { fontSize: 13, fontWeight: '700', color: COLORS.text },
+  historyUser: { fontSize: 13, color: COLORS.text, marginTop: 4 },
+  historyTime: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
   incidentCard: {
     backgroundColor: COLORS.white, borderRadius: 12,
     padding: 14, marginBottom: 8, elevation: 1,

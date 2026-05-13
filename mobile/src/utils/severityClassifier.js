@@ -22,13 +22,27 @@ const TYPE_BASE_SCORE = {
   other: 1,
 };
 
+// Words or short phrases that indicate the description is actually about an
+// incident: action verbs, witness verbs, incident-specific nouns, and
+// campus location words. Without at least one of these, the description is
+// treated as off-topic (poetry, song lyrics, random text) and forced to Low
+// regardless of the selected incident type.
+const INCIDENT_INDICATORS = /\b(saw|seen|heard|witnessed|noticed|happened|happening|stole|stolen|stealing|steal|robbed|robbery|robbing|mugged|attacked|attacking|attack|hit|hitting|punched|punch|pushed|pushing|push|grabbed|grabbing|grab|threatened|threatening|threat|broke|breaking|burgled|burglar|forced|chased|chasing|followed|following|harassed|harassing|stalking|stalked|fight|fighting|fought|screamed|screaming|yelled|escaped|hurt|injured|injury|wound|wounded|bleeding|bleed|theft|assault|harassment|vandalism|fire|smoke|burning|explosion|accident|incident|emergency|weapon|gun|knife|knives|blood|graffiti|stranger|intruder|suspect|attacker|robber|thief|prowler|library|hostel|hostels|lab|labs|gate|classroom|dormitory|walkway|parking|window|door|kitchen|bathroom|cafeteria|laundry|alley|dining|class)\b/i;
+
 /**
  * Returns 'low' | 'medium' | 'high'. Combines a type-derived floor with
  * keyword hits in the description. Keyword hits in the high band can lift a
  * "vandalism" report to high if the description mentions a weapon or injury.
+ *
+ * Off-topic descriptions (no incident-related vocabulary) are forced to
+ * 'low' regardless of the chosen type, so that picking "Assault" and
+ * writing a poem doesn't produce a Medium-severity report.
  */
 export const classifySeverity = (description, type) => {
   const text = (description || '').toLowerCase();
+
+  if (!INCIDENT_INDICATORS.test(text)) return 'low';
+
   let score = TYPE_BASE_SCORE[type] ?? 1;
 
   if (HIGH_KEYWORDS.test(text)) score += 3;
@@ -39,6 +53,15 @@ export const classifySeverity = (description, type) => {
   if (score >= 2) return 'medium';
   return 'low';
 };
+
+/**
+ * Returns true if the description appears to be about an actual incident
+ * (contains at least one action verb, incident noun, or campus location
+ * word). Used by the report screen to warn the user that off-topic text
+ * is being treated as Low severity.
+ */
+export const seemsLikeIncidentDescription = (text) =>
+  INCIDENT_INDICATORS.test((text || '').toLowerCase());
 
 // Common short English function words — at least one must appear, otherwise
 // the text is probably a random string of letters or a non-English language

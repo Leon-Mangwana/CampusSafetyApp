@@ -38,6 +38,22 @@ const triggerSOS = async (req, res) => {
     };
 
     await db.ref(`sosAlerts/${alertId}`).set(sosAlert);
+    console.log(
+      `[triggerSOS] wrote alert ${alertId.slice(0, 8)} for ${userData.fullName} ` +
+      `status=active lat=${latitude} lng=${longitude}`
+    );
+
+    // Sanity-check the persistence: read the same record back and read the
+    // whole parent node. If readback shows the record but the parent doesn't,
+    // we have an orderByChild/index bug, not a write bug.
+    const direct = await db.ref(`sosAlerts/${alertId}`).once('value');
+    const parent = await db.ref('sosAlerts').once('value');
+    let parentChildren = 0;
+    parent.forEach(() => { parentChildren++; });
+    console.log(
+      `[triggerSOS] readback alert=${direct.exists() ? direct.val().status : 'MISSING'} ` +
+      `parent_children=${parentChildren}`
+    );
 
     // Notify all security officers
     const securitySnapshot = await db
@@ -153,17 +169,26 @@ const resolveSOSAlert = async (req, res) => {
 };
 
 /**
- * Get all active SOS alerts (for security dashboard)
+ * Get all active SOS alerts (for security dashboard).
+ * We deliberately avoid orderByChild here — it requires an index, and a
+ * missing index has been observed to silently exclude freshly written
+ * children. Reading the whole node and sorting in JS is more reliable.
  */
 const getActiveSOSAlerts = async (req, res) => {
   try {
-    const snapshot = await db.ref('sosAlerts').orderByChild('timestamp').once('value');
-    const alerts = [];
-    snapshot.forEach((child) => alerts.push(child.val()));
-    alerts.reverse();
+    const snapshot = await db.ref('sosAlerts').once('value');
+    const raw = snapshot.val() || {};
+    const alerts = Object.values(raw).sort(
+      (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
+    );
 
     const { status } = req.query;
     const filtered = status ? alerts.filter((a) => a.status === status) : alerts;
+
+    console.log(
+      `[getSOSAlerts] total=${alerts.length} filter=${status || 'none'} returned=${filtered.length} ` +
+      `statuses=[${alerts.map((a) => `${a.alertId?.slice(0, 8)}:${a.status}`).join(', ')}]`
+    );
 
     res.json({ alerts: filtered, total: filtered.length });
   } catch (error) {
