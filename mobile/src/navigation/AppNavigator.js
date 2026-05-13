@@ -22,6 +22,7 @@ import SettingsScreen from '../screens/SettingsScreen';
 import SecurityDashboardScreen from '../screens/SecurityDashboardScreen';
 import MonthlyReportScreen from '../screens/MonthlyReportScreen';
 import EmergencyContactsScreen from '../screens/EmergencyContactsScreen';
+import SOSTrackerScreen from '../screens/SOSTrackerScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -159,6 +160,9 @@ function AppStack() {
       <Stack.Screen name="SafetyStats" component={SafetyStatsScreen} />
       {isSecurityOrAdmin && (
         <Stack.Screen name="SecurityDashboard" component={SecurityDashboardScreen} />
+      )}
+      {isSecurityOrAdmin && (
+        <Stack.Screen name="SOSTracker" component={SOSTrackerScreen} />
       )}
     </Stack.Navigator>
   );

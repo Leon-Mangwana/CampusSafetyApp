@@ -7,6 +7,16 @@ import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, deleteIncident, resolveSOSAlert } from '../services/api';
 
 const REFRESH_INTERVAL_MS = 10000;
+const REFRESH_INTERVAL_ACTIVE_SOS_MS = 3000;
+
+const formatRelativeTime = (iso) => {
+  if (!iso) return 'never';
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+};
 
 const openInMaps = (lat, lng, label = 'Incident') => {
   if (lat == null || lng == null) return;
@@ -55,17 +65,26 @@ const SecurityDashboardScreen = ({ navigation }) => {
   const [sosAlerts, setSosAlerts] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState('');
+  // Used to re-render the "Updated Xs ago" labels every second so they
+  // appear to tick in real time.
+  const [, setTick] = useState(0);
   const mountedRef = useRef(true);
 
+  // While there's an active SOS we poll three times faster so security
+  // visibly sees the GPS pin advance. We also keep a 1s ticker to refresh
+  // the relative-time labels.
   useEffect(() => {
     mountedRef.current = true;
     fetchAll();
-    const intervalId = setInterval(() => fetchAll({ silent: true }), REFRESH_INTERVAL_MS);
+    const pollMs = sosAlerts.length > 0 ? REFRESH_INTERVAL_ACTIVE_SOS_MS : REFRESH_INTERVAL_MS;
+    const intervalId = setInterval(() => fetchAll({ silent: true }), pollMs);
+    const tickerId = setInterval(() => setTick((t) => t + 1), 1000);
     return () => {
       mountedRef.current = false;
       clearInterval(intervalId);
+      clearInterval(tickerId);
     };
-  }, []);
+  }, [sosAlerts.length]);
 
   const fetchAll = async ({ silent = false } = {}) => {
     try {
@@ -206,16 +225,23 @@ const SecurityDashboardScreen = ({ navigation }) => {
                 <Text style={styles.sosId}>{alert.alertId}</Text>
                 <StatusBadge status={alert.status} />
               </View>
+              <View style={styles.liveRow}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveLabel}>LIVE</Text>
+                <Text style={styles.liveTime}>
+                  Updated {formatRelativeTime(alert.lastUpdated || alert.timestamp)}
+                </Text>
+              </View>
               <Text style={styles.sosUser}>{alert.userName || 'Unknown'}</Text>
               <Text style={styles.sosLocation}>
-                Location: {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
+                Location: {alert.latitude?.toFixed(6)}, {alert.longitude?.toFixed(6)}
               </Text>
               <View style={styles.sosActionRow}>
                 <TouchableOpacity
-                  style={[styles.respondButton, { flex: 1, marginRight: 6 }]}
-                  onPress={() => handleSOSRespond(alert.alertId)}
+                  style={[styles.trackButton, { flex: 1, marginRight: 6 }]}
+                  onPress={() => navigation.navigate('SOSTracker', { alertId: alert.alertId, initialAlert: alert })}
                 >
-                  <Text style={styles.respondButtonText}>Mark Responded</Text>
+                  <Text style={styles.trackButtonText}>Track Live</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.mapsButton, { flex: 1, marginLeft: 6 }]}
@@ -224,6 +250,12 @@ const SecurityDashboardScreen = ({ navigation }) => {
                   <Text style={styles.mapsButtonText}>Open in Maps</Text>
                 </TouchableOpacity>
               </View>
+              <TouchableOpacity
+                style={styles.respondButton}
+                onPress={() => handleSOSRespond(alert.alertId)}
+              >
+                <Text style={styles.respondButtonText}>Mark Responded</Text>
+              </TouchableOpacity>
             </View>
           ))
         )}
@@ -325,6 +357,24 @@ const styles = StyleSheet.create({
     padding: 10, alignItems: 'center', marginTop: 8,
   },
   respondButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
+  liveRow: {
+    flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 4,
+  },
+  liveDot: {
+    width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.danger,
+    marginRight: 6,
+  },
+  liveLabel: {
+    color: COLORS.danger, fontWeight: '800', fontSize: 11, letterSpacing: 1,
+  },
+  liveTime: {
+    marginLeft: 'auto', color: COLORS.textSecondary, fontSize: 11,
+  },
+  trackButton: {
+    backgroundColor: COLORS.primary, borderRadius: 6,
+    padding: 10, alignItems: 'center', marginTop: 8,
+  },
+  trackButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
   emptyCard: {
     backgroundColor: COLORS.white, borderRadius: 12, padding: 14,
     marginBottom: 8, borderWidth: 1, borderColor: COLORS.border,

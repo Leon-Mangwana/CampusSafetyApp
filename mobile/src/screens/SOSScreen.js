@@ -38,9 +38,10 @@ const SOSScreen = ({ navigation }) => {
       );
       pulse.start();
 
-      // Update location every 10 seconds. The whole callback is wrapped in
-      // try/catch so a transient GPS failure ("Current location is
-      // unavailable") never bubbles up as an unhandled promise rejection.
+      // Update location every 3 seconds so the security dashboard pin moves
+      // in near real time. The whole callback is wrapped in try/catch so a
+      // transient GPS failure ("Current location is unavailable") never
+      // bubbles up as an unhandled promise rejection.
       locationInterval.current = setInterval(async () => {
         if (!alertId) return;
         try {
@@ -50,7 +51,7 @@ const SOSScreen = ({ navigation }) => {
           await updateSOSLocation(alertId, loc.coords.latitude, loc.coords.longitude);
           setLocation(loc.coords);
         } catch (e) { /* continue tracking */ }
-      }, 10000);
+      }, 3000);
 
       return () => {
         pulse.stop();
