@@ -19,8 +19,33 @@ const LoginScreen = ({ navigation }) => {
   const [loginAs, setLoginAs] = useState('student'); // 'student' | 'admin'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
+
+  // Returns the error message for an email, or '' if it's valid / empty.
+  // Empty is treated as "not yet entered" — we only flag it on submit so the
+  // user isn't yelled at the moment they tap the field.
+  const checkEmail = (value) => {
+    const v = (value || '').trim();
+    if (!v) return '';
+    if (!isValidEmail(v)) {
+      return 'Please enter a valid email (e.g. yourname@university.ac.zw).';
+    }
+    return '';
+  };
+
+  const onEmailChange = (value) => {
+    setEmail(value);
+    // Clear the inline error as soon as the user starts fixing it, but only
+    // re-validate live once a previous error exists — avoids nagging on the
+    // first keystroke.
+    if (emailError) setEmailError(checkEmail(value));
+  };
+
+  const onEmailBlur = () => {
+    setEmailError(checkEmail(email));
+  };
 
   const handleLogin = async () => {
     const trimmedEmail = email.trim();
@@ -28,8 +53,11 @@ const LoginScreen = ({ navigation }) => {
       Alert.alert('Error', 'Please enter both email and password.');
       return;
     }
-    if (!isValidEmail(trimmedEmail)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address (e.g. yourname@university.ac.zw).');
+    const emailMsg = checkEmail(trimmedEmail);
+    if (emailMsg) {
+      setEmailError(emailMsg);
+      // Inline message is now visible — skip the modal so the user can fix
+      // the field directly without dismissing an alert first.
       return;
     }
 
@@ -136,15 +164,17 @@ const LoginScreen = ({ navigation }) => {
             {isAdminTab ? 'Admin Email' : 'University Email'}
           </Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, emailError && styles.inputError]}
             placeholder="e.g. student@university.ac.zw"
             placeholderTextColor={COLORS.grey}
             value={email}
-            onChangeText={setEmail}
+            onChangeText={onEmailChange}
+            onBlur={onEmailBlur}
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
           />
+          {!!emailError && <Text style={styles.errorText}>{emailError}</Text>}
 
           <Text style={styles.label}>Password</Text>
           <PasswordInput
@@ -226,6 +256,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: COLORS.text,
     backgroundColor: COLORS.greyLight,
+  },
+  inputError: {
+    borderColor: COLORS.danger,
+    borderWidth: 1.5,
+  },
+  errorText: {
+    color: COLORS.danger,
+    fontSize: 12,
+    marginTop: 6,
   },
   signInButton: {
     backgroundColor: COLORS.primary,
