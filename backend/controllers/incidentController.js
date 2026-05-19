@@ -215,14 +215,31 @@ const getMonthlyReport = async (req, res) => {
 
     const incidentSnapshot = await db.ref('incidents').once('value');
     const allIncidents = [];
-    incidentSnapshot.forEach((child) => allIncidents.push(child.val()));
+    incidentSnapshot.forEach((child) => {
+      const v = child.val();
+      if (v && typeof v === 'object') allIncidents.push(v);
+    });
 
-    const inRange = (timestamp, start, end) => {
-      const ts = new Date(timestamp).getTime();
+    // Parse timestamps defensively: accept ISO strings, numeric epoch ms,
+    // numeric epoch seconds, and Firebase server-timestamp objects. Anything
+    // that still fails to parse falls back to the child's createdAt or — as a
+    // last resort — "now", so a malformed timestamp can't make an incident
+    // silently disappear from this month's totals.
+    const parseTs = (raw, fallback) => {
+      if (raw == null) return fallback;
+      if (typeof raw === 'number') {
+        // Treat 10-digit values as seconds (epoch), 13-digit as ms.
+        return raw < 1e12 ? raw * 1000 : raw;
+      }
+      const t = new Date(raw).getTime();
+      return Number.isFinite(t) ? t : fallback;
+    };
+    const inRange = (incident, start, end) => {
+      const ts = parseTs(incident.timestamp, parseTs(incident.createdAt, Date.now()));
       return ts >= start && ts < end;
     };
-    const incidents = allIncidents.filter((i) => inRange(i.timestamp, periodStart, periodEnd));
-    const prevIncidents = allIncidents.filter((i) => inRange(i.timestamp, prevStart, prevEnd));
+    const incidents = allIncidents.filter((i) => inRange(i, periodStart, periodEnd));
+    const prevIncidents = allIncidents.filter((i) => inRange(i, prevStart, prevEnd));
 
     const total = incidents.length;
     const approved = incidents.filter((i) => i.status === 'resolved').length;
@@ -240,14 +257,12 @@ const getMonthlyReport = async (req, res) => {
 
     const locationMap = {};
     incidents.forEach((i) => {
-      if (i.latitude == null || i.longitude == null) return;
-      const key = `${i.latitude.toFixed(3)},${i.longitude.toFixed(3)}`;
+      const lat = typeof i.latitude === 'number' ? i.latitude : parseFloat(i.latitude);
+      const lng = typeof i.longitude === 'number' ? i.longitude : parseFloat(i.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
       if (!locationMap[key]) {
-        locationMap[key] = {
-          latitude: i.latitude,
-          longitude: i.longitude,
-          count: 0,
-        };
+        locationMap[key] = { latitude: lat, longitude: lng, count: 0 };
       }
       locationMap[key].count++;
     });
@@ -257,7 +272,7 @@ const getMonthlyReport = async (req, res) => {
     let sosAlerts = 0;
     sosSnapshot.forEach((child) => {
       const alert = child.val();
-      if (alert?.timestamp && inRange(alert.timestamp, periodStart, periodEnd)) sosAlerts++;
+      if (alert && inRange(alert, periodStart, periodEnd)) sosAlerts++;
     });
 
     let trendPercent = 0;
@@ -362,7 +377,10 @@ const getIncidentStats = async (req, res) => {
   try {
     const snapshot = await db.ref('incidents').once('value');
     const incidents = [];
-    snapshot.forEach((child) => incidents.push(child.val()));
+    snapshot.forEach((child) => {
+      const v = child.val();
+      if (v && typeof v === 'object') incidents.push(v);
+    });
 
     const total = incidents.length;
     const pending = incidents.filter((i) => i.status === 'pending').length;
@@ -373,24 +391,33 @@ const getIncidentStats = async (req, res) => {
     // Breakdown by type
     const byType = {};
     incidents.forEach((i) => {
-      byType[i.type] = (byType[i.type] || 0) + 1;
+      const key = i.type || 'other';
+      byType[key] = (byType[key] || 0) + 1;
     });
 
     // Breakdown by severity
     const bySeverity = { low: 0, medium: 0, high: 0 };
     incidents.forEach((i) => {
-      bySeverity[i.severity] = (bySeverity[i.severity] || 0) + 1;
+      if (i.severity && bySeverity[i.severity] !== undefined) {
+        bySeverity[i.severity]++;
+      }
     });
 
-    // Top hotspots (group by approximate location)
+    // Top hotspots (group by approximate location). Skip incidents that have
+    // missing or non-numeric coordinates — a single bad record used to crash
+    // the whole stats endpoint via `.toFixed` on undefined.
     const locationMap = {};
     incidents.forEach((i) => {
-      const key = `${i.latitude.toFixed(3)},${i.longitude.toFixed(3)}`;
+      const lat = typeof i.latitude === 'number' ? i.latitude : parseFloat(i.latitude);
+      const lng = typeof i.longitude === 'number' ? i.longitude : parseFloat(i.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
       if (!locationMap[key]) {
-        locationMap[key] = { latitude: i.latitude, longitude: i.longitude, count: 0, types: {} };
+        locationMap[key] = { latitude: lat, longitude: lng, count: 0, types: {} };
       }
       locationMap[key].count++;
-      locationMap[key].types[i.type] = (locationMap[key].types[i.type] || 0) + 1;
+      const t = i.type || 'other';
+      locationMap[key].types[t] = (locationMap[key].types[t] || 0) + 1;
     });
     const hotspots = Object.values(locationMap)
       .sort((a, b) => b.count - a.count)

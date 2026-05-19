@@ -1,12 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  SafeAreaView, ActivityIndicator, Alert, Linking,
+  SafeAreaView, ActivityIndicator, Alert, Linking, RefreshControl,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { COLORS } from '../constants/theme';
 import { getMonthlyReport } from '../services/api';
+
+// How often to refetch the report while the screen stays visible. 5 s feels
+// near-live during a demo while still being well within Firebase quotas.
+const REFRESH_INTERVAL_MS = 5000;
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -82,13 +87,24 @@ const MonthlyReportScreen = ({ navigation }) => {
   const [year, setYear] = useState(today.getFullYear());
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  // Tracks the time of the most recent successful fetch so the user can see
+  // the data is live, not stale.
+  const [lastUpdated, setLastUpdated] = useState(null);
+  // Avoid clobbering newer state with the result of a slow in-flight request
+  // that started before the user changed month/year.
+  const requestIdRef = useRef(0);
 
-  const fetchReport = useCallback(async () => {
-    setLoading(true);
+  const fetchReport = useCallback(async ({ silent = false } = {}) => {
+    const requestId = ++requestIdRef.current;
+    if (!silent) setLoading(true);
     try {
       const data = await getMonthlyReport({ month, year });
+      if (requestId !== requestIdRef.current) return; // stale response
       setReport(data);
+      setLastUpdated(new Date());
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       // Demo fallback so the UI always has something to show.
       setReport({
         monthLabel: `${MONTH_NAMES[month - 1]} ${year}`,
@@ -102,13 +118,34 @@ const MonthlyReportScreen = ({ navigation }) => {
         trend: { percent: 0, direction: 'flat', previousTotal: 0 },
       });
     } finally {
-      setLoading(false);
+      // Always clear the spinner on whichever request is the latest, even
+      // if it ran silently — otherwise a silent fetch that supersedes a
+      // non-silent one (e.g. focus+mount racing) leaves loading stuck true.
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [month, year]);
 
+  // Initial fetch + refetch when the user navigates months.
   useEffect(() => {
     fetchReport();
   }, [fetchReport]);
+
+  // Refresh whenever the screen regains focus (e.g. user submits a new
+  // incident report and navigates back) and poll periodically while visible
+  // so live numbers tick without manual intervention.
+  useFocusEffect(
+    useCallback(() => {
+      fetchReport({ silent: true });
+      const id = setInterval(() => fetchReport({ silent: true }), REFRESH_INTERVAL_MS);
+      return () => clearInterval(id);
+    }, [fetchReport]),
+  );
+
+  const onPullRefresh = async () => {
+    setRefreshing(true);
+    await fetchReport({ silent: true });
+    setRefreshing(false);
+  };
 
   const goPrevMonth = () => {
     if (month === 1) {
@@ -198,8 +235,31 @@ const MonthlyReportScreen = ({ navigation }) => {
           <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onPullRefresh}
+              colors={[COLORS.primary]}
+              tintColor={COLORS.primary}
+            />
+          }
+        >
           <Text style={styles.periodSub}>Period: {report.periodLabel}</Text>
+          <View style={styles.liveRow}>
+            {lastUpdated && (
+              <Text style={styles.lastUpdated}>
+                Live · updated {lastUpdated.toLocaleTimeString()} (auto-refresh 5s)
+              </Text>
+            )}
+            <TouchableOpacity
+              onPress={() => fetchReport({ silent: true })}
+              style={styles.refreshNowButton}
+            >
+              <Text style={styles.refreshNowText}>↻ Refresh now</Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.statsGrid}>
             <View style={[styles.statCard, { borderTopColor: COLORS.primary }]}>
@@ -285,7 +345,23 @@ const styles = StyleSheet.create({
   periodLabel: { fontSize: 16, fontWeight: '700', color: COLORS.text, minWidth: 160, textAlign: 'center' },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   content: { padding: 16, paddingBottom: 40 },
-  periodSub: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 16 },
+  periodSub: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 4 },
+  liveRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  lastUpdated: { fontSize: 11, color: COLORS.success, fontStyle: 'italic', flex: 1 },
+  refreshNowButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.white,
+  },
+  refreshNowText: { fontSize: 11, color: COLORS.primary, fontWeight: '700' },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   statCard: {
     width: '48%', backgroundColor: COLORS.white, borderRadius: 10,
