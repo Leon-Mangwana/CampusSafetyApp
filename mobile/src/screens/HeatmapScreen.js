@@ -38,6 +38,22 @@ const msuSeedPoints = () =>
     weight: MSU_SEED_WEIGHTS[b.code] ?? 1,
   }));
 
+// Bounding box around the MSU Senga campus. Used to decide whether the
+// backend response actually contains any incidents on campus — if every real
+// point is somewhere else (e.g. a test report in town), the campus view
+// would otherwise be blank, so we layer the landmark seed on top.
+const MSU_BOUNDS = {
+  minLat: -19.5210,
+  maxLat: -19.5140,
+  minLng: 29.8295,
+  maxLng: 29.8370,
+};
+const isInMsuBounds = (p) =>
+  typeof p?.latitude === 'number' &&
+  typeof p?.longitude === 'number' &&
+  p.latitude >= MSU_BOUNDS.minLat && p.latitude <= MSU_BOUNDS.maxLat &&
+  p.longitude >= MSU_BOUNDS.minLng && p.longitude <= MSU_BOUNDS.maxLng;
+
 // Leaflet HTML payload. The WebView loads this once at mount time, then we
 // push data updates via window.postMessage from React Native — avoids
 // reloading tiles on every refresh and keeps zoom/pan state intact.
@@ -269,10 +285,13 @@ const HeatmapScreen = ({ route, navigation }) => {
     if (!silent) setLoading(true);
     try {
       const result = await getHeatmapData(filterRef.current);
-      let points = result.dataPoints || [];
-      // If the backend has nothing for this filter yet, fall back to the MSU
-      // landmark seed so the campus visualization is never blank.
-      if (points.length === 0) points = msuSeedPoints();
+      const realPoints = result.dataPoints || [];
+      // Always keep MSU campus visualised. If no real incident lies inside
+      // the campus bounding box (e.g. backend has only off-campus test data,
+      // or the filter has zero matches on campus), layer the landmark seed
+      // on top so the High/Medium/Low palette is visible at MSU.
+      const hasCampusData = realPoints.some(isInMsuBounds);
+      const points = hasCampusData ? realPoints : [...realPoints, ...msuSeedPoints()];
       pendingPointsRef.current = points;
       if (webReady) postToMap({ type: 'points', points });
       setLastUpdated(new Date().toLocaleTimeString());
