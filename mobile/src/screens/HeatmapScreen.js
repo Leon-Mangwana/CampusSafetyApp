@@ -21,21 +21,20 @@ const REFRESH_INTERVAL_MS = 5000;
 // Coordinates are approximations around DEFAULT_CAMPUS so the heatmap always
 // has recognisable reference points, matching the campus map shown to users.
 const MSU_LANDMARKS = [
-  { code: 'L/B', name: 'Library',          latitude: -19.5168, longitude: 29.8322 },
-  { code: 'SH',  name: 'Student Hall',     latitude: -19.5172, longitude: 29.8333 },
-  { code: 'SC',  name: 'Student Centre',   latitude: -19.5179, longitude: 29.8340 },
-  { code: 'DM',  name: 'Dining Mess',      latitude: -19.5188, longitude: 29.8328 },
-  { code: 'GYM', name: 'Gymnasium',        latitude: -19.5188, longitude: 29.8344 },
+  { name: 'Library',        weight: 3, latitude: -19.5168, longitude: 29.8322 },
+  { name: 'Student Hall',   weight: 2, latitude: -19.5172, longitude: 29.8333 },
+  { name: 'Student Centre', weight: 3, latitude: -19.5179, longitude: 29.8340 },
+  { name: 'Dining Hall',    weight: 1, latitude: -19.5188, longitude: 29.8328 },
+  { name: 'Gymnasium',      weight: 1, latitude: -19.5188, longitude: 29.8344 },
 ];
 
-// Seed risk weights per building so the demo/fallback view shows the full
-// High/Medium/Low palette over real MSU landmarks. Weights: 3=High, 2=Med, 1=Low.
-const MSU_SEED_WEIGHTS = { 'L/B': 3, SH: 2, SC: 3, DM: 1, GYM: 1 };
+// Seed-points fallback for the demo view — uses the per-landmark weight so
+// the High/Medium/Low palette is always represented when the backend is empty.
 const msuSeedPoints = () =>
   MSU_LANDMARKS.map((b) => ({
     latitude: b.latitude,
     longitude: b.longitude,
-    weight: MSU_SEED_WEIGHTS[b.code] ?? 1,
+    weight: b.weight,
   }));
 
 // Bounding box around the MSU Senga campus. Used to decide whether the
@@ -66,15 +65,19 @@ const buildLeafletHtml = (initialLat, initialLng, landmarks) => `
   <style>
     html, body, #map { height: 100%; margin: 0; padding: 0; background: #f5f5f5; }
     .building-label {
+      display: inline-block;
       background: #ffffff;
       border: 1px solid #9e9e9e;
-      border-radius: 3px;
-      padding: 2px 6px;
+      border-radius: 4px;
+      padding: 2px 8px;
       font: 600 11px/1.1 -apple-system, Segoe UI, Roboto, sans-serif;
       color: #212121;
       box-shadow: 0 1px 2px rgba(0,0,0,0.15);
       white-space: nowrap;
       text-align: center;
+      /* Self-center on the lat/lng anchor — works for labels of any length
+         without having to hand-tune iconAnchor per building. */
+      transform: translateX(-50%);
     }
   </style>
 </head>
@@ -92,11 +95,12 @@ const buildLeafletHtml = (initialLat, initialLng, landmarks) => `
     let userMarker = null;
     let focusMarker = null;
 
-    // Risk palette matches the legend (High = red, Med = orange, Low = yellow).
+    // Risk palette matches the on-screen legend dots (theme severity colours):
+    // High = red, Medium = orange, Low = green.
     const colorFor = (weight) => {
-      if (weight >= 3) return '#E64A19'; // High
-      if (weight >= 2) return '#FB8C00'; // Medium
-      return '#FBC02D';                   // Low
+      if (weight >= 3) return '#E64A19'; // High  — matches COLORS.severityHigh family
+      if (weight >= 2) return '#FB8C00'; // Medium — matches COLORS.severityMedium
+      return '#4CAF50';                   // Low — matches COLORS.severityLow
     };
 
     // Render each incident as 3 concentric halos with decreasing opacity to
@@ -133,9 +137,11 @@ const buildLeafletHtml = (initialLat, initialLng, landmarks) => `
       L.marker([b.latitude, b.longitude], {
         icon: L.divIcon({
           className: '',
-          html: '<div class="building-label">' + b.code + '</div>',
+          html: '<div class="building-label">' + b.name + '</div>',
+          // iconSize null + CSS translateX(-50%) on .building-label lets the
+          // label self-center horizontally regardless of text length.
           iconSize: null,
-          iconAnchor: [18, 10],
+          iconAnchor: [0, 10],
         }),
         interactive: false,
         keyboard: false,
