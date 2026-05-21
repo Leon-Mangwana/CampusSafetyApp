@@ -36,13 +36,20 @@
         "googleMaps": {
           "apiKey": "AIzaSyD8B8Fg3Atfy2QMgmafLDgBcPjpUGRD3XM"
         }
-      }
+      },
+      "package": "com.leonmangwana.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-sharing"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "44229aad-ea60-4e33-aa76-5c3733ea83e9"
+      }
+    },
+    "owner": "leon-mangwana"
   }
 }
