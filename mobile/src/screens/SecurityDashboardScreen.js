@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet,
   RefreshControl, SafeAreaView, ScrollView, Linking, Platform, Alert,
 } from 'react-native';
+import * as Location from 'expo-location';
 import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, deleteIncident, resolveSOSAlert } from '../services/api';
 
@@ -16,6 +17,51 @@ const formatRelativeTime = (iso) => {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   return `${Math.floor(minutes / 60)}h ago`;
+};
+
+// Reverse-geocoded place names, keyed by coarse coords (~11m) so a moving SOS
+// doesn't re-query on every tick. Module-level: survives re-renders and remounts.
+const placeCache = new Map();
+const placeKey = (lat, lng) => `${lat.toFixed(4)},${lng.toFixed(4)}`;
+
+const describePlace = ([place]) => {
+  if (!place) return null;
+  const parts = [place.name, place.street, place.district, place.city]
+    .filter(Boolean)
+    // Drop a `name` that is just the street number or a repeat of the street.
+    .filter((part, i, all) => all.indexOf(part) === i);
+  return parts.slice(0, 2).join(', ') || null;
+};
+
+/** Shows a human-readable place for a coordinate; renders nothing if unavailable. */
+const PlaceLabel = ({ latitude, longitude }) => {
+  const [place, setPlace] = useState(() =>
+    latitude != null && longitude != null ? placeCache.get(placeKey(latitude, longitude)) ?? null : null
+  );
+
+  useEffect(() => {
+    if (latitude == null || longitude == null) return;
+    const key = placeKey(latitude, longitude);
+    if (placeCache.has(key)) {
+      setPlace(placeCache.get(key));
+      return;
+    }
+    let cancelled = false;
+    Location.reverseGeocodeAsync({ latitude, longitude })
+      .then((results) => {
+        const label = describePlace(results || []);
+        placeCache.set(key, label);
+        if (!cancelled) setPlace(label);
+      })
+      // Offline or no geocoding provider — cache the miss so we stop retrying.
+      .catch(() => {
+        placeCache.set(key, null);
+      });
+    return () => { cancelled = true; };
+  }, [latitude, longitude]);
+
+  if (!place) return null;
+  return <Text style={styles.placeLabel} numberOfLines={1}>📍 {place}</Text>;
 };
 
 const openInMaps = (lat, lng, label = 'Incident') => {
@@ -255,9 +301,7 @@ const SecurityDashboardScreen = ({ navigation }) => {
                   Updated {formatRelativeTime(alert.lastUpdated || alert.timestamp)}
                 </Text>
               </View>
-              <Text style={styles.sosLocation}>
-                Location: {alert.latitude?.toFixed(6)}, {alert.longitude?.toFixed(6)}
-              </Text>
+              <PlaceLabel latitude={alert.latitude} longitude={alert.longitude} />
               <View style={styles.sosActionRow}>
                 <TouchableOpacity
                   style={[styles.trackButton, { flex: 1, marginRight: 6 }]}
@@ -393,7 +437,7 @@ const styles = StyleSheet.create({
   },
   sosHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sosName: { flex: 1, fontSize: 15, fontWeight: '700', color: COLORS.danger, marginRight: 8 },
-  sosLocation: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+  placeLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
   respondButton: {
     backgroundColor: COLORS.danger, borderRadius: 6,
     padding: 10, alignItems: 'center', marginTop: 8,
