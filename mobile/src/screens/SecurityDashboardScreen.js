@@ -243,7 +243,9 @@ const SecurityDashboardScreen = ({ navigation }) => {
           sosAlerts.map((alert) => (
             <View key={alert.alertId} style={styles.sosCard}>
               <View style={styles.sosHeader}>
-                <Text style={styles.sosId}>{alert.alertId}</Text>
+                <Text style={styles.sosName} numberOfLines={1}>
+                  {alert.userName || 'Unknown'}
+                </Text>
                 <StatusBadge status={alert.status} />
               </View>
               <View style={styles.liveRow}>
@@ -253,7 +255,6 @@ const SecurityDashboardScreen = ({ navigation }) => {
                   Updated {formatRelativeTime(alert.lastUpdated || alert.timestamp)}
                 </Text>
               </View>
-              <Text style={styles.sosUser}>{alert.userName || 'Unknown'}</Text>
               <Text style={styles.sosLocation}>
                 Location: {alert.latitude?.toFixed(6)}, {alert.longitude?.toFixed(6)}
               </Text>
@@ -339,10 +340,11 @@ const SecurityDashboardScreen = ({ navigation }) => {
             {recentSos.map((alert) => (
               <View key={alert.alertId} style={styles.historyCard}>
                 <View style={styles.sosHeader}>
-                  <Text style={styles.historyId}>{alert.alertId?.slice(0, 8)}</Text>
+                  <Text style={styles.historyUser} numberOfLines={1}>
+                    {alert.userName || 'Unknown'}
+                  </Text>
                   <StatusBadge status={alert.status} />
                 </View>
-                <Text style={styles.historyUser}>{alert.userName || 'Unknown'}</Text>
                 <Text style={styles.historyTime}>
                   {new Date(alert.timestamp).toLocaleString()}
                 </Text>
@@ -390,8 +392,7 @@ const styles = StyleSheet.create({
     marginBottom: 8, borderLeftWidth: 4, borderLeftColor: COLORS.danger,
   },
   sosHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  sosId: { fontSize: 14, fontWeight: '700', color: COLORS.danger },
-  sosUser: { fontSize: 14, color: COLORS.text, marginTop: 4 },
+  sosName: { flex: 1, fontSize: 15, fontWeight: '700', color: COLORS.danger, marginRight: 8 },
   sosLocation: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
   respondButton: {
     backgroundColor: COLORS.danger, borderRadius: 6,
@@ -433,8 +434,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white, borderRadius: 10, padding: 12,
     marginBottom: 6, borderLeftWidth: 3, borderLeftColor: COLORS.grey,
   },
-  historyId: { fontSize: 13, fontWeight: '700', color: COLORS.text },
-  historyUser: { fontSize: 13, color: COLORS.text, marginTop: 4 },
+  historyUser: { flex: 1, fontSize: 13, fontWeight: '700', color: COLORS.text, marginRight: 8 },
   historyTime: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
   incidentCard: {
     backgroundColor: COLORS.white, borderRadius: 12,
