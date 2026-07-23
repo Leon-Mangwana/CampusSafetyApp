@@ -105,13 +105,19 @@ const SeverityBadge = ({ severity }) => {
   );
 };
 
+const SEGMENTS = [
+  { key: 'sos', label: 'SOS' },
+  { key: 'incidents', label: 'Incidents' },
+  { key: 'history', label: 'History' },
+];
+
 const SecurityDashboardScreen = ({ navigation }) => {
+  const [segment, setSegment] = useState('sos');
   const [stats, setStats] = useState({ total: 0, pending: 0, active: 0, resolved: 0 });
   const [incidents, setIncidents] = useState([]);
   const [sosAlerts, setSosAlerts] = useState([]);
   const [recentSos, setRecentSos] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState('');
   const [sosFetchError, setSosFetchError] = useState(null);
   // Used to re-render the "Updated Xs ago" labels every second so they
   // appear to tick in real time.
@@ -156,7 +162,6 @@ const SecurityDashboardScreen = ({ navigation }) => {
       } else {
         setSosFetchError(sosData.reason?.message || 'Failed to load SOS alerts');
       }
-      setLastUpdated(new Date().toLocaleTimeString());
     } catch {
       if (silent) return;
       // Demo data
@@ -178,6 +183,16 @@ const SecurityDashboardScreen = ({ navigation }) => {
       ]);
     }
   };
+
+  // A new emergency must never sit behind a tap. When the active-alert count
+  // rises from zero we pull the officer back to the SOS segment, whatever they
+  // were looking at. We only fire on the 0 -> n edge so an officer reviewing
+  // incidents during an ongoing alert isn't yanked away on every poll.
+  const hadActiveSos = useRef(false);
+  useEffect(() => {
+    if (sosAlerts.length > 0 && !hadActiveSos.current) setSegment('sos');
+    hadActiveSos.current = sosAlerts.length > 0;
+  }, [sosAlerts.length]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -242,15 +257,10 @@ const SecurityDashboardScreen = ({ navigation }) => {
         <Text style={styles.headerTitle}>Security Dashboard</Text>
         <View style={styles.backButton} />
       </View>
-      <Text style={styles.lastUpdated}>
-        Live feed {lastUpdated ? `• updated ${lastUpdated}` : '• loading...'} (auto-refresh every 10s)
-      </Text>
 
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={styles.content}
-      >
-        {/* Stats Cards */}
+      {/* Stats and the segment switcher stay pinned; only the list below
+          scrolls, so the officer never loses the counts or the controls. */}
+      <View style={styles.pinnedHeader}>
         <View style={styles.statsRow}>
           <View style={[styles.statCard, { borderTopColor: COLORS.primary }]}>
             <Text style={styles.statValue}>{stats.total}</Text>
@@ -270,9 +280,39 @@ const SecurityDashboardScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* Active SOS Alerts — always rendered so the admin can see the
-            section is wired up even when nothing is active right now. */}
-        <Text style={styles.sectionTitle}>Active SOS Alerts</Text>
+        <View style={styles.segmentBar}>
+          {SEGMENTS.map(({ key, label }) => {
+            const count = { sos: sosAlerts.length, incidents: incidents.length, history: recentSos.length }[key];
+            const selected = segment === key;
+            const urgent = key === 'sos' && count > 0;
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[styles.segment, selected && styles.segmentSelected]}
+                onPress={() => setSegment(key)}
+              >
+                <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
+                  {label}
+                </Text>
+                {count > 0 && (
+                  <View style={[styles.segmentCount, urgent && styles.segmentCountUrgent]}>
+                    <Text style={[styles.segmentCountText, urgent && styles.segmentCountTextUrgent]}>
+                      {count}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      <ScrollView
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentContainerStyle={styles.content}
+      >
+        {segment === 'sos' && (
+          <>
         {sosFetchError && (
           <View style={styles.sosErrorBanner}>
             <Text style={styles.sosErrorText}>
@@ -304,13 +344,13 @@ const SecurityDashboardScreen = ({ navigation }) => {
               <PlaceLabel latitude={alert.latitude} longitude={alert.longitude} />
               <View style={styles.sosActionRow}>
                 <TouchableOpacity
-                  style={[styles.trackButton, { flex: 1, marginRight: 6 }]}
+                  style={[styles.sosActionButton, styles.trackButton]}
                   onPress={() => navigation.navigate('SOSTracker', { alertId: alert.alertId, initialAlert: alert })}
                 >
                   <Text style={styles.trackButtonText}>Track Live</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.mapsButton, { flex: 1, marginLeft: 6 }]}
+                  style={[styles.sosActionButton, styles.mapsButton]}
                   onPress={() => openInMaps(alert.latitude, alert.longitude, `SOS ${alert.userName || ''}`)}
                 >
                   <Text style={styles.mapsButtonText}>Open in Maps</Text>
@@ -325,10 +365,15 @@ const SecurityDashboardScreen = ({ navigation }) => {
             </View>
           ))
         )}
+          </>
+        )}
 
-        {/* Recent Incidents */}
-        <Text style={styles.sectionTitle}>Recent Incident Reports</Text>
-        {incidents.map((inc) => (
+        {segment === 'incidents' && (
+          incidents.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No incident reports yet.</Text>
+            </View>
+          ) : incidents.map((inc) => (
           <View key={inc.incidentId} style={styles.incidentCard}>
             <View style={styles.incidentHeader}>
               <Text style={styles.incidentType}>
@@ -374,14 +419,15 @@ const SecurityDashboardScreen = ({ navigation }) => {
               </TouchableOpacity>
             </View>
           </View>
-        ))}
+          ))
+        )}
 
-        {/* Recent SOS history — at the bottom because it's reference data,
-            not actionable. Active alerts and incidents remain prominent. */}
-        {recentSos.length > 0 && (
-          <>
-            <Text style={styles.sectionTitle}>Recent SOS History</Text>
-            {recentSos.map((alert) => (
+        {segment === 'history' && (
+          recentSos.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No past SOS alerts.</Text>
+            </View>
+          ) : recentSos.map((alert) => (
               <View key={alert.alertId} style={styles.historyCard}>
                 <View style={styles.sosHeader}>
                   <Text style={styles.historyUser} numberOfLines={1}>
@@ -393,8 +439,7 @@ const SecurityDashboardScreen = ({ navigation }) => {
                   {new Date(alert.timestamp).toLocaleString()}
                 </Text>
               </View>
-            ))}
-          </>
+          ))
         )}
       </ScrollView>
     </SafeAreaView>
@@ -410,19 +455,40 @@ const styles = StyleSheet.create({
   headerTitle: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
   backButton: { width: 60 },
   backText: { color: COLORS.white, fontSize: 15, fontWeight: '600' },
-  lastUpdated: {
-    fontSize: 11, color: COLORS.success, textAlign: 'center',
-    paddingVertical: 6, backgroundColor: COLORS.white,
-    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  // The two buttons share every size-affecting rule (flex, height, padding) so
+  // they stay identical in width and height; only the colour differs.
+  sosActionRow: { flexDirection: 'row', marginTop: 8, gap: 12 },
+  sosActionButton: {
+    flex: 1, height: 42, borderRadius: 6,
+    alignItems: 'center', justifyContent: 'center',
   },
-  sosActionRow: { flexDirection: 'row', marginTop: 8 },
-  mapsButton: {
-    backgroundColor: COLORS.primaryDark, borderRadius: 6,
-    padding: 10, alignItems: 'center',
-  },
+  mapsButton: { backgroundColor: COLORS.primaryDark },
   mapsButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
   content: { padding: 12, paddingBottom: 32 },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  pinnedHeader: {
+    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10,
+    backgroundColor: COLORS.background,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+  segmentBar: {
+    flexDirection: 'row', backgroundColor: COLORS.border,
+    borderRadius: 8, padding: 3,
+  },
+  segment: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 8, borderRadius: 6, gap: 6,
+  },
+  segmentSelected: { backgroundColor: COLORS.white, elevation: 2 },
+  segmentText: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
+  segmentTextSelected: { color: COLORS.primary },
+  segmentCount: {
+    minWidth: 18, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 9,
+    backgroundColor: COLORS.grey, alignItems: 'center',
+  },
+  segmentCountUrgent: { backgroundColor: COLORS.danger },
+  segmentCountText: { fontSize: 11, fontWeight: '700', color: COLORS.white },
+  segmentCountTextUrgent: { color: COLORS.white },
   statCard: {
     flex: 1, backgroundColor: COLORS.white, borderRadius: 10,
     padding: 12, marginHorizontal: 3, alignItems: 'center',
@@ -430,7 +496,6 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 22, fontWeight: '700', color: COLORS.text },
   statLabel: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text, marginTop: 8, marginBottom: 8 },
   sosCard: {
     backgroundColor: '#FFEBEE', borderRadius: 12, padding: 14,
     marginBottom: 8, borderLeftWidth: 4, borderLeftColor: COLORS.danger,
@@ -456,10 +521,7 @@ const styles = StyleSheet.create({
   liveTime: {
     marginLeft: 'auto', color: COLORS.textSecondary, fontSize: 11,
   },
-  trackButton: {
-    backgroundColor: COLORS.primary, borderRadius: 6,
-    padding: 10, alignItems: 'center', marginTop: 8,
-  },
+  trackButton: { backgroundColor: COLORS.primary },
   trackButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
   emptyCard: {
     backgroundColor: COLORS.white, borderRadius: 12, padding: 14,
