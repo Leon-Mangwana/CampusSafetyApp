@@ -1,0 +1,8 @@
+node_modules
+**/node_modules
+.expo
+dist
+coverage
+package-lock.json
+mobile/package-lock.json
+backend/package-lock.json
