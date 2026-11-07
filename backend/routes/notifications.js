@@ -1,14 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateUser } = require('../middleware/auth');
+const { readLimiter, writeLimiter } = require('../middleware/rateLimiter');
 const {
   getUserNotifications,
   markAsRead,
   markAllAsRead,
 } = require('../controllers/notificationController');
 
-router.get('/', authenticateUser, getUserNotifications);
-router.put('/:id/read', authenticateUser, markAsRead);
-router.put('/read-all', authenticateUser, markAllAsRead);
+router.get('/', authenticateUser, readLimiter, getUserNotifications);
+router.put('/read-all', authenticateUser, writeLimiter, markAllAsRead);
+router.put('/:id/read', authenticateUser, writeLimiter, markAsRead);
 
 module.exports = router;
