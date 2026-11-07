@@ -1,0 +1,19 @@
+{
+  "name": "campus-safety-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Crowdsourced Campus Safety App — Expo mobile client and Express/Firebase backend",
+  "scripts": {
+    "install:all": "npm --prefix backend ci && npm --prefix mobile ci",
+    "lint": "npm --prefix backend run lint && npm --prefix mobile run lint",
+    "test": "npm --prefix backend test && npm --prefix mobile test",
+    "format": "prettier --write \"backend/**/*.{js,json,md}\" \"mobile/{App,index}.js\" \"mobile/src/**/*.js\" \"*.{json,md}\" \"docs/**/*.md\"",
+    "format:check": "prettier --check \"backend/**/*.{js,json,md}\" \"mobile/{App,index}.js\" \"mobile/src/**/*.js\" \"*.{json,md}\" \"docs/**/*.md\"",
+    "check:shared": "node backend/scripts/check-shared-sync.js",
+    "check:rules": "node -e \"const r=require('./backend/database.rules.json');const f=require('./firebase.json');if(f.database.rules!=='backend/database.rules.json')throw new Error('firebase.json does not point at backend/database.rules.json');if(r.rules['.read']!==false||r.rules['.write']!==false)throw new Error('root rules must be false');console.log('rules ok')\"",
+    "deploy:rules": "firebase deploy --only database"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  }
+}
