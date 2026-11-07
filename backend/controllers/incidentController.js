@@ -1,138 +1,176 @@
 const { db } = require('../config/firebase');
-const { v4: uuidv4 } = require('uuid');
-const {
-  sendPushNotification,
-  storeNotification,
-  findUsersWithinRadius,
-} = require('../utils/notifications');
+const { randomUUID } = require('crypto');
+const { sendPushNotification, findUsersWithinRadius } = require('../utils/notifications');
+const { notifyOfficers } = require('../utils/notifyOfficers');
+const { parseLatLng, requireString, isOneOf } = require('../utils/validate');
+const { classifySeverity } = require('../utils/severityClassifier');
+const { groupByCell, heatmapWeight, PUBLIC_MIN_COUNT, DEFAULT_CELL_DEG } = require('../utils/hotspots');
+const { isStaff } = require('../middleware/auth');
+const log = require('../utils/logger');
 
 // Valid incident types
 const INCIDENT_TYPES = [
   'theft', 'assault', 'harassment', 'vandalism',
   'unauthorized_access', 'fire', 'medical', 'suspicious_activity', 'other',
 ];
+const SEVERITIES = ['low', 'medium', 'high'];
+const INCIDENT_STATUSES = ['pending', 'active', 'resolved'];
+const MAX_DESCRIPTION = 1000;
+const MAX_LIST_LIMIT = 100;
+const DEFAULT_LIST_LIMIT = 50;
+const HEATMAP_WINDOW_DAYS = 90;
+const STATS_WINDOW_DAYS = 90;
+const NEARBY_RADIUS_M = 500;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const isoDaysAgo = (days) => new Date(Date.now() - days * DAY_MS).toISOString();
+
+/** Read incidents whose ISO timestamp lies in [startIso, endIso). */
+const readIncidentsBetween = async (startIso, endIso) => {
+  let query = db.ref('incidents').orderByChild('timestamp').startAt(startIso);
+  if (endIso) query = query.endAt(endIso);
+  const snapshot = await query.once('value');
+  const incidents = [];
+  snapshot.forEach((child) => {
+    const v = child.val();
+    if (v && typeof v === 'object' && (!endIso || v.timestamp < endIso)) incidents.push(v);
+  });
+  return incidents;
+};
+
+const countSosBetween = async (startIso, endIso) => {
+  let query = db.ref('sosAlerts').orderByChild('timestamp').startAt(startIso);
+  if (endIso) query = query.endAt(endIso);
+  const snapshot = await query.once('value');
+  let count = 0;
+  snapshot.forEach((child) => {
+    const v = child.val();
+    if (v && (!endIso || v.timestamp < endIso)) count++;
+  });
+  return count;
+};
 
 /**
- * Submit an anonymous incident report
+ * Submit an anonymous incident report. Severity is computed on the server
+ * from the description and type; whatever the client sends is ignored so a
+ * crafted request cannot trigger campus-wide "high severity" alerts.
  */
 const submitReport = async (req, res) => {
   try {
-    const { type, description, severity, latitude, longitude, imageUrl } = req.body;
+    const { type, description, latitude, longitude } = req.body || {};
 
-    // Validation
-    if (!type || !INCIDENT_TYPES.includes(type)) {
+    if (!isOneOf(type, INCIDENT_TYPES)) {
       return res.status(400).json({ error: 'Invalid incident type.' });
     }
-    if (!description || description.trim().length < 10) {
-      return res.status(400).json({ error: 'Description must be at least 10 characters.' });
+    const descResult = requireString(description, {
+      field: 'Description',
+      min: 10,
+      max: MAX_DESCRIPTION,
+    });
+    if (descResult.error) {
+      return res.status(400).json({ error: descResult.error });
     }
-    if (!['low', 'medium', 'high'].includes(severity)) {
-      return res.status(400).json({ error: 'Severity must be low, medium, or high.' });
-    }
-    if (!latitude || !longitude) {
-      return res.status(400).json({ error: 'GPS coordinates are required.' });
+    const coords = parseLatLng(latitude, longitude);
+    if (!coords) {
+      return res.status(400).json({ error: 'Valid GPS coordinates are required.' });
     }
 
-    const incidentId = uuidv4();
+    const severity = classifySeverity(descResult.value, type);
+
+    const incidentId = randomUUID();
     const incident = {
       incidentId,
       userId: null, // Anonymous — do not store reporter identity
       type,
-      description: description.trim(),
-      latitude: parseFloat(latitude),
-      longitude: parseFloat(longitude),
+      description: descResult.value,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
       timestamp: new Date().toISOString(),
       severity,
       status: 'pending',
-      imageUrl: imageUrl || null,
     };
 
     await db.ref(`incidents/${incidentId}`).set(incident);
+    log.info('incident.created', { incidentId, type, severity });
 
     // Every incident is dispatched to security — the dashboard relies on this.
-    const securitySnapshot = await db
-      .ref('users')
-      .orderByChild('role')
-      .equalTo('security')
-      .once('value');
-    const securityUsers = securitySnapshot.val() || {};
-    const securityTokens = [];
-    for (const [uid, officer] of Object.entries(securityUsers)) {
-      if (officer.fcmToken) securityTokens.push(officer.fcmToken);
-      await storeNotification(uid, incidentId, 'incident',
-        `New ${severity} severity ${type} incident reported.`
-      );
-    }
+    await notifyOfficers({
+      referenceId: incidentId,
+      type: 'incident',
+      message: `New ${severity} severity ${type} incident reported.`,
+      pushTitle: `New ${severity.toUpperCase()} incident`,
+      pushBody: `${type.replace(/_/g, ' ')} reported. Open the dashboard to respond.`,
+      data: { incidentId, severity },
+    });
 
-    // Push-notify security for every severity so officers can respond quickly.
-    await sendPushNotification(
-      securityTokens,
-      `New ${severity.toUpperCase()} incident`,
-      `${type} reported. Open the dashboard to respond.`,
-      { incidentId, type, severity }
-    );
-
-    // For high severity, also alert nearby students so they can stay clear.
+    // For high severity, also alert nearby students (opt-in presence only).
     if (severity === 'high') {
-      const nearbyUsers = await findUsersWithinRadius(
-        incident.latitude, incident.longitude, 500
-      );
-      const nearbyTokens = nearbyUsers
-        .filter((u) => u.fcmToken)
-        .map((u) => u.fcmToken);
-
+      const nearby = await findUsersWithinRadius(incident.latitude, incident.longitude, NEARBY_RADIUS_M);
+      const nearbyTokens = nearby.map((u) => u.pushToken).filter(Boolean);
       await sendPushNotification(
         nearbyTokens,
         'Safety Alert',
-        `A ${type} incident has been reported near you. Stay alert.`,
-        { incidentId, type, severity }
+        `A ${type.replace(/_/g, ' ')} incident has been reported near you. Stay alert.`,
+        { incidentId, type: 'nearby', severity }
       );
     }
 
     res.status(201).json({
       message: 'Incident report submitted successfully.',
       incidentId,
+      severity,
     });
   } catch (error) {
-    console.error('Submit report error:', error);
+    log.error('incident.create_failed', { err: error });
     res.status(500).json({ error: 'Failed to submit report. Please try again.' });
   }
 };
 
 /**
- * Get all incidents (with optional filters)
+ * List incidents (staff only), newest first. Bounded and indexed.
  */
 const getIncidents = async (req, res) => {
   try {
     const { type, severity, status, limit: queryLimit } = req.query;
-    const snapshot = await db.ref('incidents').orderByChild('timestamp').once('value');
-    let incidents = [];
+    const parsed = parseInt(queryLimit, 10);
+    const limit = Number.isInteger(parsed) && parsed > 0
+      ? Math.min(parsed, MAX_LIST_LIMIT)
+      : DEFAULT_LIST_LIMIT;
 
+    // Use the indexed status filter when given; otherwise take the most
+    // recent N by timestamp. Secondary filters are applied in memory on an
+    // over-fetched window so the caller still gets up to `limit` rows.
+    const needsMemoryFilter = Boolean(type || severity);
+    const fetchLimit = needsMemoryFilter ? Math.min(limit * 4, 400) : limit;
+
+    let query;
+    if (status && isOneOf(status, INCIDENT_STATUSES)) {
+      query = db.ref('incidents').orderByChild('status').equalTo(status);
+    } else {
+      query = db.ref('incidents').orderByChild('timestamp').limitToLast(fetchLimit);
+    }
+
+    const snapshot = await query.once('value');
+    let incidents = [];
     snapshot.forEach((child) => {
-      incidents.push(child.val());
+      const v = child.val();
+      if (v && typeof v === 'object') incidents.push(v);
     });
 
-    // Reverse to get newest first
-    incidents.reverse();
-
-    // Apply filters
+    incidents.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
     if (type) incidents = incidents.filter((i) => i.type === type);
     if (severity) incidents = incidents.filter((i) => i.severity === severity);
-    if (status) incidents = incidents.filter((i) => i.status === status);
-
-    // Apply limit
-    const limit = parseInt(queryLimit) || 50;
     incidents = incidents.slice(0, limit);
 
     res.json({ incidents, total: incidents.length });
   } catch (error) {
-    console.error('Get incidents error:', error);
+    log.error('incident.list_failed', { err: error });
     res.status(500).json({ error: 'Failed to retrieve incidents.' });
   }
 };
 
 /**
- * Get a single incident by ID
+ * Get a single incident by ID (staff only)
  */
 const getIncidentById = async (req, res) => {
   try {
@@ -146,7 +184,7 @@ const getIncidentById = async (req, res) => {
 
     res.json(incident);
   } catch (error) {
-    console.error('Get incident error:', error);
+    log.error('incident.get_failed', { err: error });
     res.status(500).json({ error: 'Failed to retrieve incident.' });
   }
 };
@@ -157,9 +195,9 @@ const getIncidentById = async (req, res) => {
 const updateIncidentStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status } = req.body || {};
 
-    if (!['pending', 'active', 'resolved'].includes(status)) {
+    if (!isOneOf(status, INCIDENT_STATUSES)) {
       return res.status(400).json({ error: 'Invalid status.' });
     }
 
@@ -168,35 +206,32 @@ const updateIncidentStatus = async (req, res) => {
       return res.status(404).json({ error: 'Incident not found.' });
     }
 
-    await db.ref(`incidents/${id}`).update({
-      status,
-      updatedAt: new Date().toISOString(),
-      updatedBy: req.user.uid,
+    const now = new Date().toISOString();
+    const responseId = randomUUID();
+    await db.ref().update({
+      [`incidents/${id}/status`]: status,
+      [`incidents/${id}/updatedAt`]: now,
+      [`incidents/${id}/updatedBy`]: req.user.uid,
+      [`responses/${responseId}`]: {
+        responseId,
+        incidentId: id,
+        officerId: req.user.uid,
+        action: `Status updated to ${status}`,
+        timestamp: now,
+        status,
+      },
     });
-
-    // Log the response action
-    const responseId = uuidv4();
-    await db.ref(`responses/${responseId}`).set({
-      responseId,
-      incidentId: id,
-      officerId: req.user.uid,
-      action: `Status updated to ${status}`,
-      timestamp: new Date().toISOString(),
-      status,
-    });
+    log.info('incident.status_updated', { incidentId: id, status, officerId: req.user.uid });
 
     res.json({ message: `Incident status updated to ${status}.` });
   } catch (error) {
-    console.error('Update incident error:', error);
+    log.error('incident.status_update_failed', { err: error });
     res.status(500).json({ error: 'Failed to update incident.' });
   }
 };
 
 /**
- * Build an aggregated monthly safety report. Defaults to the current calendar
- * month if month/year are not supplied. Returns totals, category breakdown,
- * top hotspot, and a trend comparison vs the previous month — used by the
- * Monthly Report screen on the admin dashboard.
+ * Monthly safety report (staff). Reads only the two months involved.
  */
 const getMonthlyReport = async (req, res) => {
   try {
@@ -206,40 +241,22 @@ const getMonthlyReport = async (req, res) => {
     const month = Number.isInteger(monthParam) && monthParam >= 1 && monthParam <= 12
       ? monthParam - 1
       : now.getMonth();
-    const year = Number.isInteger(yearParam) && yearParam > 1970 ? yearParam : now.getFullYear();
+    const year = Number.isInteger(yearParam) && yearParam > 1970 && yearParam < 2200
+      ? yearParam
+      : now.getFullYear();
 
-    const periodStart = new Date(year, month, 1).getTime();
-    const periodEnd = new Date(year, month + 1, 1).getTime();
-    const prevStart = new Date(year, month - 1, 1).getTime();
-    const prevEnd = periodStart;
+    const periodStart = new Date(year, month, 1);
+    const periodEnd = new Date(year, month + 1, 1);
+    const prevStart = new Date(year, month - 1, 1);
 
-    const incidentSnapshot = await db.ref('incidents').once('value');
-    const allIncidents = [];
-    incidentSnapshot.forEach((child) => {
-      const v = child.val();
-      if (v && typeof v === 'object') allIncidents.push(v);
-    });
+    const [windowIncidents, sosAlerts] = await Promise.all([
+      readIncidentsBetween(prevStart.toISOString(), periodEnd.toISOString()),
+      countSosBetween(periodStart.toISOString(), periodEnd.toISOString()),
+    ]);
 
-    // Parse timestamps defensively: accept ISO strings, numeric epoch ms,
-    // numeric epoch seconds, and Firebase server-timestamp objects. Anything
-    // that still fails to parse falls back to the child's createdAt or — as a
-    // last resort — "now", so a malformed timestamp can't make an incident
-    // silently disappear from this month's totals.
-    const parseTs = (raw, fallback) => {
-      if (raw == null) return fallback;
-      if (typeof raw === 'number') {
-        // Treat 10-digit values as seconds (epoch), 13-digit as ms.
-        return raw < 1e12 ? raw * 1000 : raw;
-      }
-      const t = new Date(raw).getTime();
-      return Number.isFinite(t) ? t : fallback;
-    };
-    const inRange = (incident, start, end) => {
-      const ts = parseTs(incident.timestamp, parseTs(incident.createdAt, Date.now()));
-      return ts >= start && ts < end;
-    };
-    const incidents = allIncidents.filter((i) => inRange(i, periodStart, periodEnd));
-    const prevIncidents = allIncidents.filter((i) => inRange(i, prevStart, prevEnd));
+    const startIso = periodStart.toISOString();
+    const incidents = windowIncidents.filter((i) => i.timestamp >= startIso);
+    const prevIncidents = windowIncidents.filter((i) => i.timestamp < startIso);
 
     const total = incidents.length;
     const approved = incidents.filter((i) => i.status === 'resolved').length;
@@ -255,44 +272,25 @@ const getMonthlyReport = async (req, res) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
-    const locationMap = {};
-    incidents.forEach((i) => {
-      const lat = typeof i.latitude === 'number' ? i.latitude : parseFloat(i.latitude);
-      const lng = typeof i.longitude === 'number' ? i.longitude : parseFloat(i.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-      const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
-      if (!locationMap[key]) {
-        locationMap[key] = { latitude: lat, longitude: lng, count: 0 };
-      }
-      locationMap[key].count++;
-    });
-    const topHotspot = Object.values(locationMap).sort((a, b) => b.count - a.count)[0] || null;
-
-    const sosSnapshot = await db.ref('sosAlerts').once('value');
-    let sosAlerts = 0;
-    sosSnapshot.forEach((child) => {
-      const alert = child.val();
-      if (alert && inRange(alert, periodStart, periodEnd)) sosAlerts++;
-    });
+    const topHotspot = groupByCell(incidents)[0] || null;
 
     let trendPercent = 0;
     let trendDirection = 'flat';
     if (prevIncidents.length > 0) {
       const delta = total - prevIncidents.length;
       trendPercent = Math.round((Math.abs(delta) / prevIncidents.length) * 100);
-      // Fewer incidents = improvement, more = worsening.
       if (delta < 0) trendDirection = 'improvement';
       else if (delta > 0) trendDirection = 'worsening';
     }
 
-    const monthLabel = new Date(year, month, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
-    const periodLabel = `1 ${new Date(year, month, 1).toLocaleString('en-US', { month: 'long' })} ${year} - ${new Date(year, month + 1, 0).getDate()} ${new Date(year, month, 1).toLocaleString('en-US', { month: 'long' })} ${year}`;
+    const monthName = periodStart.toLocaleString('en-US', { month: 'long' });
+    const lastDay = new Date(year, month + 1, 0).getDate();
 
     res.json({
       month: month + 1,
       year,
-      monthLabel,
-      periodLabel,
+      monthLabel: `${monthName} ${year}`,
+      periodLabel: `1 ${monthName} ${year} - ${lastDay} ${monthName} ${year}`,
       total,
       approved,
       sosAlerts,
@@ -306,15 +304,13 @@ const getMonthlyReport = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Get monthly report error:', error);
+    log.error('incident.monthly_report_failed', { err: error });
     res.status(500).json({ error: 'Failed to generate monthly report.' });
   }
 };
 
 /**
- * Delete an incident (admin/security only). Used to clear out resolved or
- * stale reports from the dashboard — orphan response logs are left intact
- * for audit purposes.
+ * Delete an incident (admin/security only).
  */
 const deleteIncident = async (req, res) => {
   try {
@@ -324,111 +320,107 @@ const deleteIncident = async (req, res) => {
       return res.status(404).json({ error: 'Incident not found.' });
     }
     await db.ref(`incidents/${id}`).remove();
+    log.info('incident.deleted', { incidentId: id, officerId: req.user.uid });
     res.json({ message: 'Incident deleted.' });
   } catch (error) {
-    console.error('Delete incident error:', error);
+    log.error('incident.delete_failed', { err: error });
     res.status(500).json({ error: 'Failed to delete incident.' });
   }
 };
 
 /**
- * Get heatmap data — aggregated incident locations
+ * Heatmap data for the last 90 days.
+ *
+ * Students receive grid cells (~55 m) that aggregate at least two reports,
+ * so no single report — and therefore no single reporter — can be located.
+ * Staff may request `?precision=full` for per-incident points.
  */
 const getHeatmapData = async (req, res) => {
   try {
-    const { type } = req.query;
-    const snapshot = await db.ref('incidents').once('value');
-    const dataPoints = [];
+    const { type, precision } = req.query;
+    const full = precision === 'full' && isStaff(req.userRole);
 
-    snapshot.forEach((child) => {
-      const incident = child.val();
-      if (type && incident.type !== type) return;
+    let incidents = await readIncidentsBetween(isoDaysAgo(HEATMAP_WINDOW_DAYS));
+    if (type) incidents = incidents.filter((i) => i.type === type);
 
-      // Weight by severity and recency
-      let weight = 1;
-      if (incident.severity === 'high') weight = 3;
-      else if (incident.severity === 'medium') weight = 2;
+    const now = Date.now();
+    if (full) {
+      const dataPoints = incidents
+        .filter((i) => Number.isFinite(i.latitude) && Number.isFinite(i.longitude))
+        .map((i) => ({
+          latitude: i.latitude,
+          longitude: i.longitude,
+          weight: heatmapWeight(i, now),
+          type: i.type,
+          severity: i.severity,
+        }));
+      return res.json({ dataPoints, total: dataPoints.length, precision: 'full' });
+    }
 
-      // Reduce weight for older incidents (decay over 30 days)
-      const ageMs = Date.now() - new Date(incident.timestamp).getTime();
-      const ageDays = ageMs / (1000 * 60 * 60 * 24);
-      if (ageDays > 30) weight *= 0.5;
+    const cells = groupByCell(incidents, { weightOf: (i) => heatmapWeight(i, now) })
+      .filter((c) => c.count >= PUBLIC_MIN_COUNT)
+      .map((c) => ({
+        latitude: Number(c.latitude.toFixed(5)),
+        longitude: Number(c.longitude.toFixed(5)),
+        weight: Number((c.weight / c.count).toFixed(2)), // average weight → palette
+        count: c.count,
+      }));
 
-      dataPoints.push({
-        latitude: incident.latitude,
-        longitude: incident.longitude,
-        weight,
-        type: incident.type,
-        severity: incident.severity,
-      });
+    res.json({
+      dataPoints: cells,
+      total: cells.length,
+      precision: 'grid',
+      cellDegrees: DEFAULT_CELL_DEG,
+      windowDays: HEATMAP_WINDOW_DAYS,
     });
-
-    res.json({ dataPoints, total: dataPoints.length });
   } catch (error) {
-    console.error('Get heatmap data error:', error);
+    log.error('incident.heatmap_failed', { err: error });
     res.status(500).json({ error: 'Failed to retrieve heatmap data.' });
   }
 };
 
 /**
- * Get incident statistics for reports
+ * Statistics over the last 90 days. Everyone may call it; students get
+ * aggregated hotspots (grid cells with ≥2 reports), staff get the full list
+ * with per-type breakdowns.
  */
 const getIncidentStats = async (req, res) => {
   try {
-    const snapshot = await db.ref('incidents').once('value');
-    const incidents = [];
-    snapshot.forEach((child) => {
-      const v = child.val();
-      if (v && typeof v === 'object') incidents.push(v);
-    });
+    const staff = isStaff(req.userRole);
+    const since = isoDaysAgo(STATS_WINDOW_DAYS);
+    const [incidents, sosCount] = await Promise.all([
+      readIncidentsBetween(since),
+      countSosBetween(since),
+    ]);
 
     const total = incidents.length;
     const pending = incidents.filter((i) => i.status === 'pending').length;
     const active = incidents.filter((i) => i.status === 'active').length;
     const resolved = incidents.filter((i) => i.status === 'resolved').length;
-    const resolutionRate = total > 0 ? ((resolved / total) * 100).toFixed(1) : 0;
+    const resolutionRate = total > 0 ? ((resolved / total) * 100).toFixed(1) : '0.0';
 
-    // Breakdown by type
     const byType = {};
     incidents.forEach((i) => {
       const key = i.type || 'other';
       byType[key] = (byType[key] || 0) + 1;
     });
 
-    // Breakdown by severity
     const bySeverity = { low: 0, medium: 0, high: 0 };
     incidents.forEach((i) => {
-      if (i.severity && bySeverity[i.severity] !== undefined) {
-        bySeverity[i.severity]++;
-      }
+      if (bySeverity[i.severity] !== undefined) bySeverity[i.severity]++;
     });
 
-    // Top hotspots (group by approximate location). Skip incidents that have
-    // missing or non-numeric coordinates — a single bad record used to crash
-    // the whole stats endpoint via `.toFixed` on undefined.
-    const locationMap = {};
-    incidents.forEach((i) => {
-      const lat = typeof i.latitude === 'number' ? i.latitude : parseFloat(i.latitude);
-      const lng = typeof i.longitude === 'number' ? i.longitude : parseFloat(i.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-      const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
-      if (!locationMap[key]) {
-        locationMap[key] = { latitude: lat, longitude: lng, count: 0, types: {} };
-      }
-      locationMap[key].count++;
-      const t = i.type || 'other';
-      locationMap[key].types[t] = (locationMap[key].types[t] || 0) + 1;
-    });
-    const hotspots = Object.values(locationMap)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
-
-    // SOS stats
-    const sosSnapshot = await db.ref('sosAlerts').once('value');
-    let sosCount = 0;
-    sosSnapshot.forEach(() => sosCount++);
+    let hotspots = groupByCell(incidents, { withTypes: staff });
+    if (!staff) hotspots = hotspots.filter((c) => c.count >= PUBLIC_MIN_COUNT);
+    hotspots = hotspots.slice(0, 10).map((c) => ({
+      latitude: Number(c.latitude.toFixed(5)),
+      longitude: Number(c.longitude.toFixed(5)),
+      count: c.count,
+      ...(staff ? { types: c.types } : {}),
+    }));
 
     res.json({
+      windowDays: STATS_WINDOW_DAYS,
       total,
       pending,
       active,
@@ -440,7 +432,7 @@ const getIncidentStats = async (req, res) => {
       hotspots,
     });
   } catch (error) {
-    console.error('Get stats error:', error);
+    log.error('incident.stats_failed', { err: error });
     res.status(500).json({ error: 'Failed to retrieve statistics.' });
   }
 };
@@ -454,4 +446,7 @@ module.exports = {
   getHeatmapData,
   getIncidentStats,
   getMonthlyReport,
+  INCIDENT_TYPES,
+  SEVERITIES,
+  INCIDENT_STATUSES,
 };
