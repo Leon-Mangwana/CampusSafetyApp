@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Test output
+coverage/
+
 # Environment variables (contains secrets!)
 .env
 .env.local
