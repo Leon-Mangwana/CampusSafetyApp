@@ -1,16 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet,
-  RefreshControl, SafeAreaView,
+  View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, SafeAreaView, Alert,
 } from 'react-native';
 import { COLORS } from '../constants/theme';
 import { getNotifications, markNotificationRead, markAllNotificationsRead } from '../services/api';
+import { usePolling } from '../hooks/usePolling';
+import ErrorState from '../components/ErrorState';
+
+const REFRESH_INTERVAL_MS = 30000;
 
 const getNotificationIcon = (type) => {
   switch (type) {
-    case 'sos': return { emoji: '\u{1F6A8}', color: COLORS.danger };
-    case 'incident': return { emoji: '\u{26A0}', color: COLORS.warning };
-    default: return { emoji: '\u{1F514}', color: COLORS.primary };
+    case 'sos': return { emoji: '\u{1F6A8}', color: COLORS.danger, label: 'SOS' };
+    case 'incident': return { emoji: '\u{26A0}', color: COLORS.warning, label: 'Incident' };
+    default: return { emoji: '\u{1F514}', color: COLORS.primary, label: 'System' };
   }
 };
 
@@ -26,55 +29,50 @@ const timeAgo = (timestamp) => {
 
 const NotificationsScreen = () => {
   const [notifications, setNotifications] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchNotifications();
-  }, []);
-
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     try {
       const result = await getNotifications();
       setNotifications(result.notifications || []);
-    } catch {
-      // Demo data
-      setNotifications([
-        {
-          notificationId: '1', type: 'sos', message: 'SOS Alert: Student near Main Gate needs help.',
-          timestamp: new Date(Date.now() - 120000).toISOString(), isRead: false,
-        },
-        {
-          notificationId: '2', type: 'incident', message: 'High severity theft reported near Library Block B.',
-          timestamp: new Date(Date.now() - 3600000).toISOString(), isRead: false,
-        },
-        {
-          notificationId: '3', type: 'system', message: 'Welcome to Campus Safety App!',
-          timestamp: new Date(Date.now() - 86400000).toISOString(), isRead: true,
-        },
-      ]);
+      setError('');
+    } catch (err) {
+      setError(err?.message || 'Could not load notifications.');
+    } finally {
+      setLoaded(true);
     }
-  };
+  }, []);
+
+  const { refresh } = usePolling(fetchNotifications, REFRESH_INTERVAL_MS);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchNotifications();
     setRefreshing(false);
-  }, []);
+  }, [fetchNotifications]);
 
   const handleMarkRead = async (id) => {
+    const previous = notifications;
+    setNotifications((prev) => prev.map((n) => (n.notificationId === id ? { ...n, isRead: true } : n)));
     try {
       await markNotificationRead(id);
-    } catch { /* ok */ }
-    setNotifications((prev) =>
-      prev.map((n) => (n.notificationId === id ? { ...n, isRead: true } : n))
-    );
+    } catch (err) {
+      setNotifications(previous);
+      Alert.alert('Could not update', err?.message || 'Please try again.');
+    }
   };
 
   const handleMarkAllRead = async () => {
+    const previous = notifications;
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
     try {
       await markAllNotificationsRead();
-    } catch { /* ok */ }
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    } catch (err) {
+      setNotifications(previous);
+      Alert.alert('Could not update', err?.message || 'Please try again.');
+    }
   };
 
   const renderNotification = ({ item }) => {
@@ -82,15 +80,15 @@ const NotificationsScreen = () => {
     return (
       <TouchableOpacity
         style={[styles.notifCard, !item.isRead && styles.unreadCard]}
-        onPress={() => handleMarkRead(item.notificationId)}
+        onPress={() => !item.isRead && handleMarkRead(item.notificationId)}
+        accessibilityRole="button"
+        accessibilityLabel={`${icon.label} notification${item.isRead ? '' : ', unread'}: ${item.message}`}
       >
         <View style={[styles.iconCircle, { backgroundColor: icon.color + '20' }]}>
           <Text style={styles.iconEmoji}>{icon.emoji}</Text>
         </View>
         <View style={styles.notifContent}>
-          <Text style={[styles.notifMessage, !item.isRead && styles.unreadText]}>
-            {item.message}
-          </Text>
+          <Text style={[styles.notifMessage, !item.isRead && styles.unreadText]}>{item.message}</Text>
           <Text style={styles.notifTime}>{timeAgo(item.timestamp)}</Text>
         </View>
         {!item.isRead && <View style={styles.unreadDot} />}
@@ -105,7 +103,7 @@ const NotificationsScreen = () => {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Notifications</Text>
         {unreadCount > 0 && (
-          <TouchableOpacity onPress={handleMarkAllRead}>
+          <TouchableOpacity onPress={handleMarkAllRead} accessibilityRole="button">
             <Text style={styles.markAllText}>Mark all read</Text>
           </TouchableOpacity>
         )}
@@ -117,12 +115,15 @@ const NotificationsScreen = () => {
         renderItem={renderNotification}
         contentContainerStyle={styles.listContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        ListEmptyComponent={
+        ListHeaderComponent={error ? (
+          <ErrorState compact title="Could not refresh notifications" message={error} onRetry={refresh} />
+        ) : null}
+        ListEmptyComponent={loaded && !error ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>{'\u{1F514}'}</Text>
             <Text style={styles.emptyText}>No notifications yet</Text>
           </View>
-        }
+        ) : null}
       />
     </SafeAreaView>
   );
@@ -155,22 +156,15 @@ const styles = StyleSheet.create({
   },
   unreadCard: { backgroundColor: '#E3F2FD' },
   iconCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
+    width: 42, height: 42, borderRadius: 21,
+    alignItems: 'center', justifyContent: 'center', marginRight: 12,
   },
   iconEmoji: { fontSize: 20 },
   notifContent: { flex: 1 },
   notifMessage: { fontSize: 14, color: COLORS.text, lineHeight: 20 },
   unreadText: { fontWeight: '600' },
   notifTime: { fontSize: 12, color: COLORS.textSecondary, marginTop: 4 },
-  unreadDot: {
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: COLORS.primary, marginLeft: 8,
-  },
+  unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.primary, marginLeft: 8 },
   emptyContainer: { alignItems: 'center', paddingTop: 60 },
   emptyIcon: { fontSize: 48, marginBottom: 12 },
   emptyText: { fontSize: 16, color: COLORS.textSecondary },
