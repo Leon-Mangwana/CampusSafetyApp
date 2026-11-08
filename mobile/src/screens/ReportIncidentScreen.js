@@ -63,7 +63,8 @@ const ReportIncidentScreen = ({ navigation }) => {
       }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setLocation(loc.coords);
-      setLocationText(`GPS: ${loc.coords.latitude.toFixed(6)}, ${loc.coords.longitude.toFixed(6)}`);
+      const acc = Number.isFinite(loc.coords.accuracy) ? ` (accurate to ±${Math.round(loc.coords.accuracy)} m)` : '';
+      setLocationText(`Location captured${acc}`);
     } catch (error) {
       setLocationText('Unable to get location');
     }
@@ -92,9 +93,10 @@ const ReportIncidentScreen = ({ navigation }) => {
 
     setLoading(true);
     try {
+      // Severity is recomputed on the server from the same classifier; the
+      // on-screen badge is a preview only.
       await submitIncidentReport({
         type: incidentType,
-        severity,
         description: description.trim(),
         latitude: location.latitude,
         longitude: location.longitude,
@@ -210,10 +212,13 @@ const ReportIncidentScreen = ({ navigation }) => {
         <Text style={styles.label}>Location</Text>
         <View style={styles.locationBox}>
           <Text style={styles.locationText}>{locationText}</Text>
-          <TouchableOpacity onPress={getLocation}>
+          <TouchableOpacity onPress={getLocation} accessibilityRole="button" accessibilityLabel="Refresh location">
             <Text style={styles.refreshLocation}>Refresh</Text>
           </TouchableOpacity>
         </View>
+        <Text style={styles.privacyNote}>
+          Your exact position is only visible to campus security. Students see hotspots aggregated to roughly 55 m.
+        </Text>
 
         {/* Submit */}
         <TouchableOpacity
@@ -306,6 +311,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.greyLight,
   },
   locationText: { fontSize: 13, color: COLORS.textSecondary },
+  privacyNote: { fontSize: 11, color: COLORS.textSecondary, marginTop: 6, lineHeight: 15 },
   refreshLocation: { fontSize: 13, color: COLORS.primary, fontWeight: '600' },
   submitButton: {
     backgroundColor: COLORS.primary,
