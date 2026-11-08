@@ -40,24 +40,30 @@ const normaliseEmergencyContacts = (input) => {
  * are granted only via scripts/create-admin.js or PUT /auth/users/:uid/role.
  */
 const register = async (req, res) => {
+  // Rejections are logged (without personal data) so a developer watching the
+  // server terminal can see why a sign-up form was refused.
+  const reject = (status, error) => {
+    log.warn('auth.register_rejected', { status, reason: error });
+    return res.status(status).json({ error });
+  };
   try {
     const { email, password, fullName, phone, emergencyContacts } = req.body || {};
 
     if (!isEmail(email)) {
-      return res.status(400).json({ error: 'A valid email address is required.' });
+      return reject(400, 'A valid email address is required.');
     }
     if (typeof password !== 'string' || password.length < 6 || password.length > 128) {
-      return res.status(400).json({ error: 'Password must be between 6 and 128 characters.' });
+      return reject(400, 'Password must be between 6 and 128 characters.');
     }
     const nameResult = requireString(fullName, { field: 'Full name', min: 2, max: 80 });
-    if (nameResult.error) return res.status(400).json({ error: nameResult.error });
+    if (nameResult.error) return reject(400, nameResult.error);
     if (!isPhone(phone)) {
-      return res.status(400).json({ error: 'A valid phone number is required.' });
+      return reject(400, 'A valid phone number is required.');
     }
 
     const contactsResult = normaliseEmergencyContacts(emergencyContacts);
     if (!contactsResult.valid) {
-      return res.status(400).json({ error: contactsResult.error });
+      return reject(400, contactsResult.error);
     }
 
     const userRecord = await auth.createUser({
@@ -78,6 +84,7 @@ const register = async (req, res) => {
     };
 
     await db.ref(`users/${userRecord.uid}`).set(userData);
+    log.info('auth.registered', { uid: userRecord.uid });
 
     res.status(201).json({
       message: 'User registered successfully.',
@@ -85,10 +92,10 @@ const register = async (req, res) => {
     });
   } catch (error) {
     if (error.code === 'auth/email-already-exists') {
-      return res.status(409).json({ error: 'Email already registered.' });
+      return reject(409, 'Email already registered.');
     }
     if (error.code === 'auth/invalid-email') {
-      return res.status(400).json({ error: 'A valid email address is required.' });
+      return reject(400, 'A valid email address is required.');
     }
     log.error('auth.register_failed', { err: error });
     res.status(500).json({ error: 'Registration failed. Please try again.' });
