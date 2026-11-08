@@ -5,14 +5,16 @@ import {
 } from 'react-native';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
+import { useDevicePrefs } from '../context/DevicePrefsContext';
 import { updateProfile } from '../services/api';
 import { isValidPhone } from '../utils/validators';
 
 const MAX_CONTACTS = 5;
 const MIN_CONTACTS = 3;
 
-const SettingsScreen = ({ navigation }) => {
+const SettingsScreen = () => {
   const { user, signOut, updateUser } = useAuth();
+  const { prefs, setPref } = useDevicePrefs();
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [phone, setPhone] = useState(user?.phone || '');
@@ -22,7 +24,6 @@ const SettingsScreen = ({ navigation }) => {
     while (padded.length < MIN_CONTACTS) padded.push({ name: '', phone: '' });
     return padded;
   });
-  const [pushNotifications, setPushNotifications] = useState(true);
 
   const updateContact = (index, field, value) => {
     setContacts((prev) => {
@@ -82,7 +83,7 @@ const SettingsScreen = ({ navigation }) => {
       setEditing(false);
       Alert.alert('Success', 'Profile updated successfully.');
     } catch (error) {
-      Alert.alert('Error', 'Failed to update profile.');
+      Alert.alert('Error', error?.message || 'Failed to update profile.');
     }
   };
 
@@ -202,15 +203,33 @@ const SettingsScreen = ({ navigation }) => {
           )}
         </View>
 
-        {/* Preferences */}
-        <Text style={styles.sectionTitle}>Preferences</Text>
+        {/* Privacy & alerts */}
+        <Text style={styles.sectionTitle}>Privacy & Alerts</Text>
         <View style={styles.card}>
           <View style={styles.prefRow}>
-            <Text style={styles.prefLabel}>Push Notifications</Text>
+            <View style={styles.prefText}>
+              <Text style={styles.prefLabel}>Safety alerts</Text>
+              <Text style={styles.prefHint}>Push notifications about SOS responses and incidents.</Text>
+            </View>
             <Switch
-              value={pushNotifications}
-              onValueChange={setPushNotifications}
+              value={prefs.safetyAlerts}
+              onValueChange={(v) => setPref('safetyAlerts', v)}
               trackColor={{ true: COLORS.primary }}
+              accessibilityLabel="Safety alerts"
+            />
+          </View>
+          <View style={[styles.prefRow, styles.prefRowBorder]}>
+            <View style={styles.prefText}>
+              <Text style={styles.prefLabel}>Share approximate location</Text>
+              <Text style={styles.prefHint}>
+                While the app is open, share your position (rounded to about 10 m) every 5 minutes so you can be warned about serious incidents nearby. Off by default. Never shared with other students.
+              </Text>
+            </View>
+            <Switch
+              value={prefs.shareLocation}
+              onValueChange={(v) => setPref('shareLocation', v)}
+              trackColor={{ true: COLORS.primary }}
+              accessibilityLabel="Share approximate location"
             />
           </View>
         </View>
@@ -284,8 +303,11 @@ const styles = StyleSheet.create({
     borderRadius: 8, padding: 12, alignItems: 'center',
   },
   cancelEditText: { color: COLORS.grey, fontWeight: '600' },
-  prefRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  prefRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
+  prefRowBorder: { borderTopWidth: 1, borderTopColor: COLORS.border, marginTop: 8, paddingTop: 12 },
+  prefText: { flex: 1, marginRight: 12 },
   prefLabel: { fontSize: 15, color: COLORS.text },
+  prefHint: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2, lineHeight: 16 },
   aboutText: { fontSize: 15, fontWeight: '600', color: COLORS.text },
   aboutSubtext: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4 },
   aboutVersion: { fontSize: 12, color: COLORS.grey, marginTop: 8 },
