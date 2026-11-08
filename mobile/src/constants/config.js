@@ -14,8 +14,11 @@ export const FIREBASE_CONFIG = {
 // Backend port used during local development.
 const DEV_API_PORT = 3000;
 
-// Production API URL — set this to your deployed backend before building a release.
-const PRODUCTION_API_URL = 'https://your-production-domain.example.com/api';
+// Production API URL. Set EXPO_PUBLIC_API_URL (see mobile/.env.example) in
+// the build environment — EAS inlines EXPO_PUBLIC_* variables at build time.
+// A release built without it will refuse to start rather than talk to a
+// placeholder host.
+const PRODUCTION_API_URL = process.env.EXPO_PUBLIC_API_URL || '';
 
 // Resolve the laptop's LAN IP from Expo's dev-server manifest. The phone
 // already loads the JS bundle from this host, so the backend at the same IP
@@ -34,7 +37,15 @@ const resolveDevHost = () => {
 };
 
 const buildApiUrl = () => {
-  if (!__DEV__) return PRODUCTION_API_URL;
+  if (!__DEV__) {
+    if (!PRODUCTION_API_URL) {
+      throw new Error(
+        'EXPO_PUBLIC_API_URL is not set. Configure it in the EAS build profile or a .env file before building a release.',
+      );
+    }
+    return PRODUCTION_API_URL.replace(/\/+$/, '');
+  }
+  if (PRODUCTION_API_URL) return PRODUCTION_API_URL.replace(/\/+$/, '');
   const host = resolveDevHost();
   if (!host) {
     console.warn('[config] Could not resolve dev host from Expo manifest — falling back to localhost.');
