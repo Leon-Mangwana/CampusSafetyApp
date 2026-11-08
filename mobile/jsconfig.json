@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "jsx": "react-native",
+    "baseUrl": ".",
+    "checkJs": false,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["App.js", "index.js", "src/**/*.js"],
+  "exclude": ["node_modules", ".expo", "dist"]
+}
