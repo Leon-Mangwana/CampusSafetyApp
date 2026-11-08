@@ -78,6 +78,7 @@ export const isLikelyEnglish = (text) => {
   if (trimmed.length < 10) return false;
 
   const latin = (trimmed.match(/[a-zA-Z]/g) || []).length;
+  // eslint-disable-next-line no-control-regex -- deliberate: count non-ASCII code points
   const nonAscii = (trimmed.match(/[^\x00-\x7F]/g) || []).length;
   const letters = latin + nonAscii;
   if (letters === 0) return false;
