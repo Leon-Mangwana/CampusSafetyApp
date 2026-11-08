@@ -1,193 +1,71 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  RefreshControl, SafeAreaView, ScrollView, Linking, Platform, Alert,
+  View, Text, TouchableOpacity, StyleSheet, RefreshControl, SafeAreaView, FlatList, Alert,
 } from 'react-native';
-import * as Location from 'expo-location';
-import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
-import { getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, deleteIncident, resolveSOSAlert } from '../services/api';
+import { COLORS } from '../constants/theme';
+import {
+  getIncidents, getSOSAlerts, getIncidentStats, updateIncidentStatus, deleteIncident, resolveSOSAlert,
+} from '../services/api';
+import { usePolling } from '../hooks/usePolling';
+import { useNow } from '../hooks/useRelativeTime';
+import ErrorState from '../components/ErrorState';
+import { StatusBadge } from '../components/Badge';
+import StatsHeader from './dashboard/StatsHeader';
+import SOSCard from './dashboard/SOSCard';
+import IncidentCard from './dashboard/IncidentCard';
 
 const REFRESH_INTERVAL_MS = 10000;
 const REFRESH_INTERVAL_ACTIVE_SOS_MS = 3000;
 
-const formatRelativeTime = (iso) => {
-  if (!iso) return 'never';
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  return `${Math.floor(minutes / 60)}h ago`;
-};
-
-// Reverse-geocoded place names, keyed by coarse coords (~11m) so a moving SOS
-// doesn't re-query on every tick. Module-level: survives re-renders and remounts.
-const placeCache = new Map();
-const placeKey = (lat, lng) => `${lat.toFixed(4)},${lng.toFixed(4)}`;
-
-const describePlace = ([place]) => {
-  if (!place) return null;
-  const parts = [place.name, place.street, place.district, place.city]
-    .filter(Boolean)
-    // Drop a `name` that is just the street number or a repeat of the street.
-    .filter((part, i, all) => all.indexOf(part) === i);
-  return parts.slice(0, 2).join(', ') || null;
-};
-
-/** Shows a human-readable place for a coordinate; renders nothing if unavailable. */
-const PlaceLabel = ({ latitude, longitude }) => {
-  const [place, setPlace] = useState(() =>
-    latitude != null && longitude != null ? placeCache.get(placeKey(latitude, longitude)) ?? null : null
-  );
-
-  useEffect(() => {
-    if (latitude == null || longitude == null) return;
-    const key = placeKey(latitude, longitude);
-    if (placeCache.has(key)) {
-      setPlace(placeCache.get(key));
-      return;
-    }
-    let cancelled = false;
-    Location.reverseGeocodeAsync({ latitude, longitude })
-      .then((results) => {
-        const label = describePlace(results || []);
-        placeCache.set(key, label);
-        if (!cancelled) setPlace(label);
-      })
-      // Offline or no geocoding provider — cache the miss so we stop retrying.
-      .catch(() => {
-        placeCache.set(key, null);
-      });
-    return () => { cancelled = true; };
-  }, [latitude, longitude]);
-
-  if (!place) return null;
-  return <Text style={styles.placeLabel} numberOfLines={1}>📍 {place}</Text>;
-};
-
-const openInMaps = (lat, lng, label = 'Incident') => {
-  if (lat == null || lng == null) return;
-  const encodedLabel = encodeURIComponent(label);
-  const url = Platform.select({
-    ios: `maps:0,0?q=${encodedLabel}@${lat},${lng}`,
-    android: `geo:0,0?q=${lat},${lng}(${encodedLabel})`,
-  });
-  Linking.canOpenURL(url).then((ok) => {
-    const finalUrl = ok ? url : `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-    Linking.openURL(finalUrl).catch(() => {});
-  });
-};
-
-const StatusBadge = ({ status }) => {
-  const colors = {
-    pending: COLORS.warning,
-    active: COLORS.danger,
-    resolved: COLORS.success,
-    responded: COLORS.primary,
-    closed: COLORS.grey,
-  };
-  return (
-    <View style={[styles.badge, { backgroundColor: (colors[status] || COLORS.grey) + '20' }]}>
-      <Text style={[styles.badgeText, { color: colors[status] || COLORS.grey }]}>
-        {status?.charAt(0).toUpperCase() + status?.slice(1)}
-      </Text>
-    </View>
-  );
-};
-
-const SeverityBadge = ({ severity }) => {
-  const colors = { low: COLORS.severityLow, medium: COLORS.severityMedium, high: COLORS.severityHigh };
-  return (
-    <View style={[styles.badge, { backgroundColor: (colors[severity] || COLORS.grey) + '20' }]}>
-      <Text style={[styles.badgeText, { color: colors[severity] || COLORS.grey }]}>
-        {severity?.charAt(0).toUpperCase() + severity?.slice(1)}
-      </Text>
-    </View>
-  );
-};
-
-const SEGMENTS = [
-  { key: 'sos', label: 'SOS' },
-  { key: 'incidents', label: 'Incidents' },
-  { key: 'history', label: 'History' },
-];
-
 const SecurityDashboardScreen = ({ navigation }) => {
   const [segment, setSegment] = useState('sos');
-  const [stats, setStats] = useState({ total: 0, pending: 0, active: 0, resolved: 0 });
+  const [stats, setStats] = useState({});
   const [incidents, setIncidents] = useState([]);
   const [sosAlerts, setSosAlerts] = useState([]);
   const [recentSos, setRecentSos] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [sosFetchError, setSosFetchError] = useState(null);
-  // Used to re-render the "Updated Xs ago" labels every second so they
-  // appear to tick in real time.
-  const [, setTick] = useState(0);
+  const [errors, setErrors] = useState({});
   const mountedRef = useRef(true);
+  // Only the SOS segment needs second-by-second "Updated Xs ago" labels.
+  const now = useNow(segment === 'sos' ? 1000 : 60000);
 
-  // While there's an active SOS we poll three times faster so security
-  // visibly sees the GPS pin advance. We also keep a 1s ticker to refresh
-  // the relative-time labels.
   useEffect(() => {
     mountedRef.current = true;
-    fetchAll();
-    const pollMs = sosAlerts.length > 0 ? REFRESH_INTERVAL_ACTIVE_SOS_MS : REFRESH_INTERVAL_MS;
-    const intervalId = setInterval(() => fetchAll({ silent: true }), pollMs);
-    const tickerId = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => {
-      mountedRef.current = false;
-      clearInterval(intervalId);
-      clearInterval(tickerId);
-    };
-  }, [sosAlerts.length]);
+    return () => { mountedRef.current = false; };
+  }, []);
 
-  const fetchAll = async ({ silent = false } = {}) => {
-    try {
-      // Fetch ALL SOS records (no status filter) and let the dashboard
-      // decide what's active. This bypasses any server-side filter quirk
-      // and lets the admin see resolved/closed history at a glance.
-      const [statsData, incData, sosData] = await Promise.allSettled([
-        getIncidentStats(),
-        getIncidents({ limit: 20 }),
-        getSOSAlerts(),
-      ]);
-      if (!mountedRef.current) return;
-      if (statsData.status === 'fulfilled') setStats(statsData.value);
-      if (incData.status === 'fulfilled') setIncidents(incData.value.incidents || []);
-      if (sosData.status === 'fulfilled') {
-        const all = sosData.value.alerts || [];
-        const active = all.filter((a) => a.status === 'active');
-        setSosAlerts(active);
-        setRecentSos(all.filter((a) => a.status !== 'active').slice(0, 5));
-        setSosFetchError(null);
-      } else {
-        setSosFetchError(sosData.reason?.message || 'Failed to load SOS alerts');
-      }
-    } catch {
-      if (silent) return;
-      // Demo data
-      setStats({ total: 47, pending: 12, active: 3, resolved: 32 });
-      setIncidents([
-        { incidentId: 'INC-047', type: 'theft', description: 'Library Block B', timestamp: new Date().toISOString(), severity: 'high', status: 'pending' },
-        { incidentId: 'INC-046', type: 'harassment', description: 'Parking Lot A', timestamp: new Date().toISOString(), severity: 'medium', status: 'active' },
-        { incidentId: 'INC-045', type: 'unauthorized_access', description: 'Science Building', timestamp: new Date().toISOString(), severity: 'high', status: 'resolved' },
-      ]);
-      setSosAlerts([
-        {
-          alertId: 'SOS-003',
-          userName: 'Student',
-          latitude: DEFAULT_CAMPUS.latitude + 0.0008,
-          longitude: DEFAULT_CAMPUS.longitude + 0.0006,
-          status: 'active',
-          timestamp: new Date(Date.now() - 120000).toISOString(),
-        },
-      ]);
+  const fetchAll = useCallback(async () => {
+    const [statsRes, incRes, sosRes] = await Promise.allSettled([
+      getIncidentStats(),
+      getIncidents({ limit: 50 }),
+      getSOSAlerts(),
+    ]);
+    if (!mountedRef.current) return;
+
+    const nextErrors = {};
+    if (statsRes.status === 'fulfilled') setStats(statsRes.value);
+    else nextErrors.stats = statsRes.reason?.message || 'Failed to load statistics';
+
+    if (incRes.status === 'fulfilled') setIncidents(incRes.value.incidents || []);
+    else nextErrors.incidents = incRes.reason?.message || 'Failed to load incidents';
+
+    if (sosRes.status === 'fulfilled') {
+      const all = sosRes.value.alerts || [];
+      setSosAlerts(all.filter((a) => a.status === 'active'));
+      setRecentSos(all.filter((a) => a.status !== 'active').slice(0, 10));
+    } else {
+      nextErrors.sos = sosRes.reason?.message || 'Failed to load SOS alerts';
     }
-  };
+    setErrors(nextErrors);
+  }, []);
 
-  // A new emergency must never sit behind a tap. When the active-alert count
-  // rises from zero we pull the officer back to the SOS segment, whatever they
-  // were looking at. We only fire on the 0 -> n edge so an officer reviewing
-  // incidents during an ongoing alert isn't yanked away on every poll.
+  // Poll faster while an SOS is live so officers see the pin move.
+  const pollMs = sosAlerts.length > 0 ? REFRESH_INTERVAL_ACTIVE_SOS_MS : REFRESH_INTERVAL_MS;
+  const { refresh } = usePolling(fetchAll, pollMs);
+
+  // A new emergency must never sit behind a tap: when the active-alert count
+  // rises from zero, pull the officer to the SOS segment. Only on the 0 -> n
+  // edge so an officer reviewing incidents isn't yanked away on every poll.
   const hadActiveSos = useRef(false);
   useEffect(() => {
     if (sosAlerts.length > 0 && !hadActiveSos.current) setSegment('sos');
@@ -197,24 +75,32 @@ const SecurityDashboardScreen = ({ navigation }) => {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await fetchAll();
-    setRefreshing(false);
-  }, []);
+    if (mountedRef.current) setRefreshing(false);
+  }, [fetchAll]);
 
-  const handleStatusUpdate = async (incidentId, newStatus) => {
+  const handleStatusUpdate = useCallback(async (incidentId, newStatus) => {
     try {
       await updateIncidentStatus(incidentId, newStatus);
       await fetchAll();
-    } catch { /* ok */ }
-  };
+    } catch (err) {
+      Alert.alert('Update Failed', err?.message || 'Could not update the incident status.');
+    }
+  }, [fetchAll]);
 
-  const handleSOSRespond = async (alertId) => {
+  const handleSOSRespond = useCallback(async (alertId) => {
     try {
       await resolveSOSAlert(alertId, 'responded');
       await fetchAll();
-    } catch { /* ok */ }
-  };
+    } catch (err) {
+      Alert.alert('Update Failed', err?.message || 'Could not mark the SOS as responded.');
+    }
+  }, [fetchAll]);
 
-  const handleDeleteIncident = (incidentId) => {
+  const handleTrack = useCallback((alert) => {
+    navigation.navigate('SOSTracker', { alertId: alert.alertId, initialAlert: alert });
+  }, [navigation]);
+
+  const handleDeleteIncident = useCallback((incidentId) => {
     Alert.alert(
       'Delete Incident',
       'Permanently remove this incident from the dashboard? This cannot be undone.',
@@ -224,21 +110,52 @@ const SecurityDashboardScreen = ({ navigation }) => {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            // Optimistic UI: remove from the list immediately so the dashboard
-            // feels responsive, then sync with the backend.
+            // Optimistic removal, then sync with the backend.
             setIncidents((prev) => prev.filter((i) => i.incidentId !== incidentId));
             try {
               await deleteIncident(incidentId);
-              await fetchAll();
             } catch (err) {
-              Alert.alert('Delete Failed', err.message || 'Could not delete the incident.');
-              await fetchAll();
+              Alert.alert('Delete Failed', err?.message || 'Could not delete the incident.');
             }
+            await fetchAll();
           },
         },
       ],
     );
-  };
+  }, [fetchAll]);
+
+  const data = useMemo(() => {
+    if (segment === 'sos') return sosAlerts;
+    if (segment === 'incidents') return incidents;
+    return recentSos;
+  }, [segment, sosAlerts, incidents, recentSos]);
+
+  const keyExtractor = useCallback((item) => item.alertId || item.incidentId, []);
+
+  const renderItem = useCallback(({ item }) => {
+    if (segment === 'sos') {
+      return <SOSCard alert={item} now={now} onTrack={handleTrack} onRespond={handleSOSRespond} />;
+    }
+    if (segment === 'incidents') {
+      return <IncidentCard incident={item} onStatus={handleStatusUpdate} onDelete={handleDeleteIncident} />;
+    }
+    return (
+      <View style={styles.historyCard}>
+        <View style={styles.historyHeader}>
+          <Text style={styles.historyUser} numberOfLines={1}>{item.userName || 'Unknown'}</Text>
+          <StatusBadge status={item.status} />
+        </View>
+        <Text style={styles.historyTime}>{new Date(item.timestamp).toLocaleString()}</Text>
+      </View>
+    );
+  }, [segment, now, handleTrack, handleSOSRespond, handleStatusUpdate, handleDeleteIncident]);
+
+  const segmentError = errors[segment];
+  const emptyText = {
+    sos: 'No active SOS alerts right now.',
+    incidents: 'No incident reports yet.',
+    history: 'No past SOS alerts.',
+  }[segment];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -248,6 +165,8 @@ const SecurityDashboardScreen = ({ navigation }) => {
             onPress={() => navigation.goBack()}
             style={styles.backButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
           >
             <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>
@@ -258,190 +177,38 @@ const SecurityDashboardScreen = ({ navigation }) => {
         <View style={styles.backButton} />
       </View>
 
-      {/* Stats and the segment switcher stay pinned; only the list below
-          scrolls, so the officer never loses the counts or the controls. */}
-      <View style={styles.pinnedHeader}>
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, { borderTopColor: COLORS.primary }]}>
-            <Text style={styles.statValue}>{stats.total}</Text>
-            <Text style={styles.statLabel}>Total</Text>
-          </View>
-          <View style={[styles.statCard, { borderTopColor: COLORS.warning }]}>
-            <Text style={styles.statValue}>{stats.pending}</Text>
-            <Text style={styles.statLabel}>Pending</Text>
-          </View>
-          <View style={[styles.statCard, { borderTopColor: COLORS.danger }]}>
-            <Text style={styles.statValue}>{sosAlerts.length}</Text>
-            <Text style={styles.statLabel}>Active SOS</Text>
-          </View>
-          <View style={[styles.statCard, { borderTopColor: COLORS.success }]}>
-            <Text style={styles.statValue}>{stats.resolved}</Text>
-            <Text style={styles.statLabel}>Resolved</Text>
-          </View>
-        </View>
+      <StatsHeader
+        stats={stats}
+        activeSosCount={sosAlerts.length}
+        counts={{ sos: sosAlerts.length, incidents: incidents.length, history: recentSos.length }}
+        segment={segment}
+        onSelect={setSegment}
+      />
 
-        <View style={styles.segmentBar}>
-          {SEGMENTS.map(({ key, label }) => {
-            const count = { sos: sosAlerts.length, incidents: incidents.length, history: recentSos.length }[key];
-            const selected = segment === key;
-            const urgent = key === 'sos' && count > 0;
-            return (
-              <TouchableOpacity
-                key={key}
-                style={[styles.segment, selected && styles.segmentSelected]}
-                onPress={() => setSegment(key)}
-              >
-                <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
-                  {label}
-                </Text>
-                {count > 0 && (
-                  <View style={[styles.segmentCount, urgent && styles.segmentCountUrgent]}>
-                    <Text style={[styles.segmentCountText, urgent && styles.segmentCountTextUrgent]}>
-                      {count}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
-
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      <FlatList
+        data={data}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        extraData={now}
         contentContainerStyle={styles.content}
-      >
-        {segment === 'sos' && (
-          <>
-        {sosFetchError && (
-          <View style={styles.sosErrorBanner}>
-            <Text style={styles.sosErrorText}>
-              ⚠ Cannot fetch SOS alerts — the list below may be out of date. Pull down to retry.
-            </Text>
-            <Text style={styles.sosErrorDetail}>{sosFetchError}</Text>
-          </View>
-        )}
-        {sosAlerts.length === 0 ? (
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ListHeaderComponent={segmentError ? (
+          <ErrorState
+            compact
+            title="Could not refresh — the list below may be out of date"
+            message={segmentError}
+            onRetry={refresh}
+          />
+        ) : null}
+        ListEmptyComponent={!segmentError ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No active SOS alerts right now.</Text>
+            <Text style={styles.emptyText}>{emptyText}</Text>
           </View>
-        ) : (
-          sosAlerts.map((alert) => (
-            <View key={alert.alertId} style={styles.sosCard}>
-              <View style={styles.sosHeader}>
-                <Text style={styles.sosName} numberOfLines={1}>
-                  {alert.userName || 'Unknown'}
-                </Text>
-                <StatusBadge status={alert.status} />
-              </View>
-              <View style={styles.liveRow}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveLabel}>LIVE</Text>
-                <Text style={styles.liveTime}>
-                  Updated {formatRelativeTime(alert.lastUpdated || alert.timestamp)}
-                </Text>
-              </View>
-              <PlaceLabel latitude={alert.latitude} longitude={alert.longitude} />
-              <View style={styles.sosActionRow}>
-                <TouchableOpacity
-                  style={[styles.sosActionButton, styles.trackButton]}
-                  onPress={() => navigation.navigate('SOSTracker', { alertId: alert.alertId, initialAlert: alert })}
-                >
-                  <Text style={styles.trackButtonText}>Track Live</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.sosActionButton, styles.mapsButton]}
-                  onPress={() => openInMaps(alert.latitude, alert.longitude, `SOS ${alert.userName || ''}`)}
-                >
-                  <Text style={styles.mapsButtonText}>Open in Maps</Text>
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity
-                style={styles.respondButton}
-                onPress={() => handleSOSRespond(alert.alertId)}
-              >
-                <Text style={styles.respondButtonText}>Mark Responded</Text>
-              </TouchableOpacity>
-            </View>
-          ))
-        )}
-          </>
-        )}
-
-        {segment === 'incidents' && (
-          incidents.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No incident reports yet.</Text>
-            </View>
-          ) : incidents.map((inc) => (
-          <View key={inc.incidentId} style={styles.incidentCard}>
-            <View style={styles.incidentHeader}>
-              <Text style={styles.incidentType}>
-                {inc.type?.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-              </Text>
-              <SeverityBadge severity={inc.severity} />
-            </View>
-            <Text style={styles.incidentDesc} numberOfLines={2}>{inc.description}</Text>
-            <View style={styles.incidentFooter}>
-              <Text style={styles.incidentTime}>
-                {new Date(inc.timestamp).toLocaleString()}
-              </Text>
-              <StatusBadge status={inc.status} />
-            </View>
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: COLORS.primaryDark }]}
-                onPress={() => openInMaps(inc.latitude, inc.longitude, inc.type)}
-              >
-                <Text style={styles.actionButtonText}>Open in Maps</Text>
-              </TouchableOpacity>
-              {inc.status === 'pending' && (
-                <TouchableOpacity
-                  style={[styles.actionButton, { backgroundColor: COLORS.primary }]}
-                  onPress={() => handleStatusUpdate(inc.incidentId, 'active')}
-                >
-                  <Text style={styles.actionButtonText}>Accept</Text>
-                </TouchableOpacity>
-              )}
-              {inc.status !== 'resolved' && (
-                <TouchableOpacity
-                  style={[styles.actionButton, { backgroundColor: COLORS.success }]}
-                  onPress={() => handleStatusUpdate(inc.incidentId, 'resolved')}
-                >
-                  <Text style={styles.actionButtonText}>Resolve</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: COLORS.danger }]}
-                onPress={() => handleDeleteIncident(inc.incidentId)}
-              >
-                <Text style={styles.actionButtonText}>Delete</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          ))
-        )}
-
-        {segment === 'history' && (
-          recentSos.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No past SOS alerts.</Text>
-            </View>
-          ) : recentSos.map((alert) => (
-              <View key={alert.alertId} style={styles.historyCard}>
-                <View style={styles.sosHeader}>
-                  <Text style={styles.historyUser} numberOfLines={1}>
-                    {alert.userName || 'Unknown'}
-                  </Text>
-                  <StatusBadge status={alert.status} />
-                </View>
-                <Text style={styles.historyTime}>
-                  {new Date(alert.timestamp).toLocaleString()}
-                </Text>
-              </View>
-          ))
-        )}
-      </ScrollView>
+        ) : null}
+        initialNumToRender={8}
+        windowSize={5}
+        removeClippedSubviews
+      />
     </SafeAreaView>
   );
 };
@@ -455,112 +222,19 @@ const styles = StyleSheet.create({
   headerTitle: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
   backButton: { width: 60 },
   backText: { color: COLORS.white, fontSize: 15, fontWeight: '600' },
-  // The two buttons share every size-affecting rule (flex, height, padding) so
-  // they stay identical in width and height; only the colour differs.
-  sosActionRow: { flexDirection: 'row', marginTop: 8, gap: 12 },
-  sosActionButton: {
-    flex: 1, height: 42, borderRadius: 6,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  mapsButton: { backgroundColor: COLORS.primaryDark },
-  mapsButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
   content: { padding: 12, paddingBottom: 32 },
-  pinnedHeader: {
-    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10,
-    backgroundColor: COLORS.background,
-    borderBottomWidth: 1, borderBottomColor: COLORS.border,
-  },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
-  segmentBar: {
-    flexDirection: 'row', backgroundColor: COLORS.border,
-    borderRadius: 8, padding: 3,
-  },
-  segment: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 8, borderRadius: 6, gap: 6,
-  },
-  segmentSelected: { backgroundColor: COLORS.white, elevation: 2 },
-  segmentText: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
-  segmentTextSelected: { color: COLORS.primary },
-  segmentCount: {
-    minWidth: 18, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 9,
-    backgroundColor: COLORS.grey, alignItems: 'center',
-  },
-  segmentCountUrgent: { backgroundColor: COLORS.danger },
-  segmentCountText: { fontSize: 11, fontWeight: '700', color: COLORS.white },
-  segmentCountTextUrgent: { color: COLORS.white },
-  statCard: {
-    flex: 1, backgroundColor: COLORS.white, borderRadius: 10,
-    padding: 12, marginHorizontal: 3, alignItems: 'center',
-    borderTopWidth: 3, elevation: 2,
-  },
-  statValue: { fontSize: 22, fontWeight: '700', color: COLORS.text },
-  statLabel: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
-  sosCard: {
-    backgroundColor: '#FFEBEE', borderRadius: 12, padding: 14,
-    marginBottom: 8, borderLeftWidth: 4, borderLeftColor: COLORS.danger,
-  },
-  sosHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  sosName: { flex: 1, fontSize: 15, fontWeight: '700', color: COLORS.danger, marginRight: 8 },
-  placeLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
-  respondButton: {
-    backgroundColor: COLORS.danger, borderRadius: 6,
-    padding: 10, alignItems: 'center', marginTop: 8,
-  },
-  respondButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
-  liveRow: {
-    flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 4,
-  },
-  liveDot: {
-    width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.danger,
-    marginRight: 6,
-  },
-  liveLabel: {
-    color: COLORS.danger, fontWeight: '800', fontSize: 11, letterSpacing: 1,
-  },
-  liveTime: {
-    marginLeft: 'auto', color: COLORS.textSecondary, fontSize: 11,
-  },
-  trackButton: { backgroundColor: COLORS.primary },
-  trackButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 14 },
   emptyCard: {
     backgroundColor: COLORS.white, borderRadius: 12, padding: 14,
-    marginBottom: 8, borderWidth: 1, borderColor: COLORS.border,
-    alignItems: 'center',
+    marginBottom: 8, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center',
   },
   emptyText: { color: COLORS.textSecondary, fontSize: 13 },
-  sosErrorBanner: {
-    backgroundColor: '#FFF3CD', borderRadius: 8, padding: 12,
-    borderLeftWidth: 4, borderLeftColor: COLORS.warning,
-    marginBottom: 8,
-  },
-  sosErrorText: { color: '#856404', fontSize: 13, fontWeight: '600' },
-  sosErrorDetail: { color: '#856404', fontSize: 11, marginTop: 4, opacity: 0.8 },
   historyCard: {
     backgroundColor: COLORS.white, borderRadius: 10, padding: 12,
     marginBottom: 6, borderLeftWidth: 3, borderLeftColor: COLORS.grey,
   },
+  historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   historyUser: { flex: 1, fontSize: 13, fontWeight: '700', color: COLORS.text, marginRight: 8 },
   historyTime: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
-  incidentCard: {
-    backgroundColor: COLORS.white, borderRadius: 12,
-    padding: 14, marginBottom: 8, elevation: 1,
-  },
-  incidentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  incidentType: { fontSize: 15, fontWeight: '600', color: COLORS.text },
-  incidentDesc: { fontSize: 13, color: COLORS.textSecondary, marginTop: 6 },
-  incidentFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
-  incidentTime: { fontSize: 12, color: COLORS.grey },
-  actionRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10, gap: 8 },
-  actionButton: { borderRadius: 6, paddingVertical: 8, paddingHorizontal: 16 },
-  actionButtonText: { color: COLORS.white, fontWeight: '600', fontSize: 13 },
-  badge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  badgeText: { fontSize: 11, fontWeight: '600' },
-  reportButton: {
-    backgroundColor: COLORS.primary, marginHorizontal: 12, marginTop: 8,
-    borderRadius: 8, paddingVertical: 12, alignItems: 'center',
-  },
-  reportButtonText: { color: COLORS.white, fontSize: 14, fontWeight: '700' },
 });
 
 export default SecurityDashboardScreen;

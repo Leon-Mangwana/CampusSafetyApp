@@ -1,20 +1,38 @@
 const { db } = require('../config/firebase');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const { sendPushNotification, storeNotification } = require('../utils/notifications');
+const { notifyOfficers } = require('../utils/notifyOfficers');
+const { parseLatLng, isAbsent, isOneOf } = require('../utils/validate');
+const log = require('../utils/logger');
+
+const LOCATION_SOURCES = ['gps', 'last_known', 'none'];
+const SOS_STATUSES = ['active', 'responded', 'closed'];
+const MAX_LIST = 50;
+
+const parseAccuracy = (accuracy) =>
+  Number.isFinite(Number(accuracy)) && Number(accuracy) >= 0 ? Math.round(Number(accuracy)) : null;
 
 /**
- * Trigger an SOS alert
+ * Trigger an SOS alert.
+ *
+ * An SOS is never rejected for lack of GPS: a student whose phone cannot get a
+ * fix still needs help. If coordinates are supplied they must be valid; if
+ * they are absent the alert is stored with locationStatus 'none' and the
+ * dashboard tells officers to phone the student.
  */
 const triggerSOS = async (req, res) => {
   try {
     const userId = req.user.uid;
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, accuracy, locationSource } = req.body || {};
 
-    if (!latitude || !longitude) {
-      return res.status(400).json({ error: 'GPS coordinates are required for SOS.' });
+    let coords = null;
+    if (!isAbsent(latitude) || !isAbsent(longitude)) {
+      coords = parseLatLng(latitude, longitude);
+      if (!coords) {
+        return res.status(400).json({ error: 'Latitude and longitude must be valid coordinates.' });
+      }
     }
 
-    // Get user info for emergency contact
     const userSnapshot = await db.ref(`users/${userId}`).once('value');
     const userData = userSnapshot.val();
     if (!userData) {
@@ -25,76 +43,46 @@ const triggerSOS = async (req, res) => {
       ? userData.emergencyContacts
       : [];
 
-    const alertId = uuidv4();
+    const locationStatus = coords
+      ? (isOneOf(locationSource, LOCATION_SOURCES) ? locationSource : 'gps')
+      : 'none';
+
+    const alertId = randomUUID();
     const sosAlert = {
       alertId,
       userId,
       userName: userData.fullName,
-      latitude: parseFloat(latitude),
-      longitude: parseFloat(longitude),
+      userPhone: userData.phone || null,
+      latitude: coords ? coords.latitude : null,
+      longitude: coords ? coords.longitude : null,
+      accuracy: parseAccuracy(accuracy),
+      locationStatus,
       timestamp: new Date().toISOString(),
       status: 'active',
       emergencyContacts,
     };
 
     await db.ref(`sosAlerts/${alertId}`).set(sosAlert);
-    console.log(
-      `[triggerSOS] wrote alert ${alertId.slice(0, 8)} for ${userData.fullName} ` +
-      `status=active lat=${latitude} lng=${longitude}`
-    );
+    log.info('sos.created', { alertId, locationStatus });
 
-    // Sanity-check the persistence: read the same record back and read the
-    // whole parent node. If readback shows the record but the parent doesn't,
-    // we have an orderByChild/index bug, not a write bug.
-    const direct = await db.ref(`sosAlerts/${alertId}`).once('value');
-    const parent = await db.ref('sosAlerts').once('value');
-    let parentChildren = 0;
-    parent.forEach(() => { parentChildren++; });
-    console.log(
-      `[triggerSOS] readback alert=${direct.exists() ? direct.val().status : 'MISSING'} ` +
-      `parent_children=${parentChildren}`
-    );
-
-    // Notify all security officers
-    const securitySnapshot = await db
-      .ref('users')
-      .orderByChild('role')
-      .equalTo('security')
-      .once('value');
-    const securityUsers = securitySnapshot.val() || {};
-    const securityTokens = [];
-
-    for (const [uid, officer] of Object.entries(securityUsers)) {
-      if (officer.fcmToken) securityTokens.push(officer.fcmToken);
-      await storeNotification(uid, alertId, 'sos',
-        `EMERGENCY SOS from ${userData.fullName}. Location: ${latitude}, ${longitude}`
-      );
-    }
-
-    // Push notification to security
-    await sendPushNotification(
-      securityTokens,
-      'EMERGENCY SOS ALERT',
-      `${userData.fullName} needs immediate assistance!`,
-      { alertId, latitude: String(latitude), longitude: String(longitude), type: 'sos' }
-    );
-
-    // SMS to emergency contacts (the mobile client also fires a native SMS
-    // deep-link for instant delivery; this log is for backend audit trail).
-    for (const contact of emergencyContacts) {
-      console.log(
-        `[SMS] SOS -> ${contact.name} (${contact.phone}): ` +
-        `${userData.fullName} triggered SOS at ${latitude}, ${longitude}`
-      );
-    }
+    const result = await notifyOfficers({
+      referenceId: alertId,
+      type: 'sos',
+      message: `EMERGENCY SOS from ${userData.fullName}. Open the dashboard to respond.`,
+      pushTitle: 'EMERGENCY SOS ALERT',
+      pushBody: `${userData.fullName} needs immediate assistance!`,
+      data: { alertId },
+    });
+    log.info('sos.officers_notified', { alertId, notified: result.notified, push: result.push });
 
     res.status(201).json({
       message: 'SOS Alert Activated. Help is on the way.',
       alertId,
+      locationStatus,
       emergencyContacts,
     });
   } catch (error) {
-    console.error('SOS trigger error:', error);
+    log.error('sos.create_failed', { err: error });
     res.status(500).json({ error: 'Failed to send SOS. Please try again.' });
   }
 };
@@ -105,7 +93,12 @@ const triggerSOS = async (req, res) => {
 const updateSOSLocation = async (req, res) => {
   try {
     const { alertId } = req.params;
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, accuracy } = req.body || {};
+
+    const coords = parseLatLng(latitude, longitude);
+    if (!coords) {
+      return res.status(400).json({ error: 'Latitude and longitude must be valid coordinates.' });
+    }
 
     const snapshot = await db.ref(`sosAlerts/${alertId}`).once('value');
     if (!snapshot.exists()) {
@@ -116,16 +109,21 @@ const updateSOSLocation = async (req, res) => {
     if (alert.userId !== req.user.uid) {
       return res.status(403).json({ error: 'Not authorized to update this alert.' });
     }
+    if (alert.status === 'closed') {
+      return res.status(409).json({ error: 'This SOS alert is already closed.' });
+    }
 
     await db.ref(`sosAlerts/${alertId}`).update({
-      latitude: parseFloat(latitude),
-      longitude: parseFloat(longitude),
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      accuracy: parseAccuracy(accuracy),
+      locationStatus: 'gps',
       lastUpdated: new Date().toISOString(),
     });
 
     res.json({ message: 'SOS location updated.' });
   } catch (error) {
-    console.error('SOS location update error:', error);
+    log.error('sos.location_update_failed', { err: error });
     res.status(500).json({ error: 'Failed to update SOS location.' });
   }
 };
@@ -136,7 +134,7 @@ const updateSOSLocation = async (req, res) => {
 const resolveSOSAlert = async (req, res) => {
   try {
     const { alertId } = req.params;
-    const { status } = req.body;
+    const { status } = req.body || {};
 
     if (!['responded', 'closed'].includes(status)) {
       return res.status(400).json({ error: 'Status must be responded or closed.' });
@@ -152,47 +150,52 @@ const resolveSOSAlert = async (req, res) => {
       resolvedBy: req.user.uid,
       resolvedAt: new Date().toISOString(),
     });
+    log.info('sos.resolved', { alertId, status, officerId: req.user.uid });
 
-    // Notify the user who triggered the SOS
+    // Notify the student who triggered the SOS (in-app + push).
     const alert = snapshot.val();
-    await storeNotification(alert.userId, alertId, 'sos',
-      status === 'responded'
-        ? 'Security team is responding to your SOS alert.'
-        : 'Your SOS alert has been resolved.'
-    );
+    const message = status === 'responded'
+      ? 'Security team is responding to your SOS alert.'
+      : 'Your SOS alert has been resolved.';
+    await storeNotification(alert.userId, alertId, 'sos', message);
+
+    const tokenSnap = await db.ref(`users/${alert.userId}/pushToken`).once('value');
+    const studentToken = tokenSnap.val();
+    if (studentToken) {
+      await sendPushNotification([studentToken], 'Campus Security', message, { alertId, type: 'sos' });
+    }
 
     res.json({ message: `SOS alert ${status}.` });
   } catch (error) {
-    console.error('Resolve SOS error:', error);
+    log.error('sos.resolve_failed', { err: error });
     res.status(500).json({ error: 'Failed to resolve SOS alert.' });
   }
 };
 
 /**
- * Get all active SOS alerts (for security dashboard).
- * We deliberately avoid orderByChild here — it requires an index, and a
- * missing index has been observed to silently exclude freshly written
- * children. Reading the whole node and sorting in JS is more reliable.
+ * SOS alerts for the security dashboard, newest first. With `?status=` the
+ * indexed status query is used; otherwise the most recent 50.
  */
 const getActiveSOSAlerts = async (req, res) => {
   try {
-    const snapshot = await db.ref('sosAlerts').once('value');
-    const raw = snapshot.val() || {};
-    const alerts = Object.values(raw).sort(
-      (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
-    );
-
     const { status } = req.query;
-    const filtered = status ? alerts.filter((a) => a.status === status) : alerts;
+    let query;
+    if (status && isOneOf(status, SOS_STATUSES)) {
+      query = db.ref('sosAlerts').orderByChild('status').equalTo(status);
+    } else {
+      query = db.ref('sosAlerts').orderByChild('timestamp').limitToLast(MAX_LIST);
+    }
+    const snapshot = await query.once('value');
+    const alerts = [];
+    snapshot.forEach((child) => {
+      const v = child.val();
+      if (v && typeof v === 'object') alerts.push(v);
+    });
+    alerts.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
 
-    console.log(
-      `[getSOSAlerts] total=${alerts.length} filter=${status || 'none'} returned=${filtered.length} ` +
-      `statuses=[${alerts.map((a) => `${a.alertId?.slice(0, 8)}:${a.status}`).join(', ')}]`
-    );
-
-    res.json({ alerts: filtered, total: filtered.length });
+    res.json({ alerts, total: alerts.length });
   } catch (error) {
-    console.error('Get SOS alerts error:', error);
+    log.error('sos.list_failed', { err: error });
     res.status(500).json({ error: 'Failed to retrieve SOS alerts.' });
   }
 };
@@ -219,10 +222,11 @@ const cancelSOS = async (req, res) => {
       cancelledAt: new Date().toISOString(),
       cancelledBy: 'user',
     });
+    log.info('sos.cancelled', { alertId });
 
     res.json({ message: 'SOS alert cancelled.' });
   } catch (error) {
-    console.error('Cancel SOS error:', error);
+    log.error('sos.cancel_failed', { err: error });
     res.status(500).json({ error: 'Failed to cancel SOS alert.' });
   }
 };
@@ -233,4 +237,5 @@ module.exports = {
   resolveSOSAlert,
   getActiveSOSAlerts,
   cancelSOS,
+  SOS_STATUSES,
 };

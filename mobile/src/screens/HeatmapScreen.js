@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { COLORS, DEFAULT_CAMPUS } from '../constants/theme';
 import { getHeatmapData } from '../services/api';
+import LeafletMap from '../components/LeafletMap';
+import ErrorState from '../components/ErrorState';
+import { usePolling } from '../hooks/usePolling';
 
 const FILTERS = [
   { label: 'All', value: '' },
@@ -15,303 +17,89 @@ const FILTERS = [
   { label: 'Vandalism', value: 'vandalism' },
 ];
 
-const REFRESH_INTERVAL_MS = 5000;
+// Aggregated server data changes slowly; 30 s keeps the view fresh without
+// hammering the API from every open tab. Polling pauses when the tab is not
+// focused or the app is in the background (see usePolling).
+const REFRESH_INTERVAL_MS = 30000;
 
-// Midlands State University Main Campus (Senga, Gweru) building landmarks.
-// Coordinates are approximations around DEFAULT_CAMPUS so the heatmap always
-// has recognisable reference points, matching the campus map shown to users.
+// Midlands State University Main Campus (Senga, Gweru) building labels.
+// Labels only — they carry no risk weighting. Heat comes from real reports.
 const MSU_LANDMARKS = [
-  { name: 'Library',        weight: 3, latitude: -19.5168, longitude: 29.8322 },
-  { name: 'Student Hall',   weight: 2, latitude: -19.5172, longitude: 29.8333 },
-  { name: 'Student Centre', weight: 3, latitude: -19.5179, longitude: 29.8340 },
-  { name: 'Dining Hall',    weight: 1, latitude: -19.5188, longitude: 29.8328 },
-  { name: 'Gymnasium',      weight: 1, latitude: -19.5188, longitude: 29.8344 },
+  { name: 'Library',        latitude: -19.5168, longitude: 29.8322 },
+  { name: 'Student Hall',   latitude: -19.5172, longitude: 29.8333 },
+  { name: 'Student Centre', latitude: -19.5179, longitude: 29.8340 },
+  { name: 'Dining Hall',    latitude: -19.5188, longitude: 29.8328 },
+  { name: 'Gymnasium',      latitude: -19.5188, longitude: 29.8344 },
 ];
-
-// Seed-points fallback for the demo view — uses the per-landmark weight so
-// the High/Medium/Low palette is always represented when the backend is empty.
-const msuSeedPoints = () =>
-  MSU_LANDMARKS.map((b) => ({
-    latitude: b.latitude,
-    longitude: b.longitude,
-    weight: b.weight,
-  }));
-
-// Bounding box around the MSU Senga campus. Used to decide whether the
-// backend response actually contains any incidents on campus — if every real
-// point is somewhere else (e.g. a test report in town), the campus view
-// would otherwise be blank, so we layer the landmark seed on top.
-const MSU_BOUNDS = {
-  minLat: -19.5210,
-  maxLat: -19.5140,
-  minLng: 29.8295,
-  maxLng: 29.8370,
-};
-const isInMsuBounds = (p) =>
-  typeof p?.latitude === 'number' &&
-  typeof p?.longitude === 'number' &&
-  p.latitude >= MSU_BOUNDS.minLat && p.latitude <= MSU_BOUNDS.maxLat &&
-  p.longitude >= MSU_BOUNDS.minLng && p.longitude <= MSU_BOUNDS.maxLng;
-
-// Leaflet HTML payload. The WebView loads this once at mount time, then we
-// push data updates via window.postMessage from React Native — avoids
-// reloading tiles on every refresh and keeps zoom/pan state intact.
-const buildLeafletHtml = (initialLat, initialLng, landmarks) => `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>
-    html, body, #map { height: 100%; margin: 0; padding: 0; background: #f5f5f5; }
-    .building-label {
-      display: inline-block;
-      background: #ffffff;
-      border: 1px solid #9e9e9e;
-      border-radius: 4px;
-      padding: 2px 8px;
-      font: 600 11px/1.1 -apple-system, Segoe UI, Roboto, sans-serif;
-      color: #212121;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-      white-space: nowrap;
-      text-align: center;
-      /* Self-center on the lat/lng anchor — works for labels of any length
-         without having to hand-tune iconAnchor per building. */
-      transform: translateX(-50%);
-    }
-  </style>
-</head>
-<body>
-  <div id="map"></div>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script>
-    const map = L.map('map').setView([${initialLat}, ${initialLng}], 17);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap',
-    }).addTo(map);
-
-    let haloLayers = [];
-    let userMarker = null;
-    let focusMarker = null;
-
-    // Risk palette matches the on-screen legend dots (theme severity colours):
-    // High = red, Medium = orange, Low = green.
-    const colorFor = (weight) => {
-      if (weight >= 3) return '#E64A19'; // High  — matches COLORS.severityHigh family
-      if (weight >= 2) return '#FB8C00'; // Medium — matches COLORS.severityMedium
-      return '#4CAF50';                   // Low — matches COLORS.severityLow
-    };
-
-    // Render each incident as 3 concentric halos with decreasing opacity to
-    // produce the soft "blob" look from the campus heatmap mockup.
-    const renderPoints = (points) => {
-      haloLayers.forEach((c) => map.removeLayer(c));
-      haloLayers = [];
-      points.forEach((p) => {
-        const color = colorFor(p.weight);
-        const base = 30 + (p.weight || 1) * 18;
-        const rings = [
-          { r: base * 2.4, op: 0.15 },
-          { r: base * 1.6, op: 0.28 },
-          { r: base * 1.0, op: 0.55 },
-        ];
-        rings.forEach((ring) => {
-          const c = L.circle([p.latitude, p.longitude], {
-            radius: ring.r,
-            color: color,
-            fillColor: color,
-            fillOpacity: ring.op,
-            opacity: 0,
-            weight: 0,
-          }).addTo(map);
-          haloLayers.push(c);
-        });
-      });
-    };
-
-    // Static campus building labels — always drawn so the heatmap visually
-    // anchors to recognisable MSU landmarks even when incident data is sparse.
-    const landmarks = ${JSON.stringify(landmarks)};
-    landmarks.forEach((b) => {
-      L.marker([b.latitude, b.longitude], {
-        icon: L.divIcon({
-          className: '',
-          html: '<div class="building-label">' + b.name + '</div>',
-          // iconSize null + CSS translateX(-50%) on .building-label lets the
-          // label self-center horizontally regardless of text length.
-          iconSize: null,
-          iconAnchor: [0, 10],
-        }),
-        interactive: false,
-        keyboard: false,
-      }).addTo(map);
-    });
-
-    const setUserLocation = (lat, lng, pan) => {
-      if (userMarker) map.removeLayer(userMarker);
-      userMarker = L.circleMarker([lat, lng], {
-        radius: 8, color: '#1565C0', fillColor: '#42A5F5',
-        fillOpacity: 1, weight: 2,
-      }).addTo(map);
-      // Only recenter when the user explicitly asks to (Locate Me button).
-      // On initial load we keep the MSU campus view so the L/B, SH, SC, DM,
-      // GYM landmarks and the seed halos stay on screen even if the phone's
-      // GPS is far from campus.
-      if (pan) map.setView([lat, lng], 17);
-    };
-
-    const focusOn = (lat, lng, count) => {
-      if (focusMarker) map.removeLayer(focusMarker);
-      focusMarker = L.circleMarker([lat, lng], {
-        radius: 14, color: '#D32F2F', fillColor: '#D32F2F',
-        fillOpacity: 0.5, weight: 3,
-      }).addTo(map);
-      if (typeof count === 'number') {
-        focusMarker.bindPopup('Hotspot: ' + count + ' incidents').openPopup();
-      }
-      map.setView([lat, lng], 18);
-    };
-
-    const handleMessage = (raw) => {
-      try {
-        const msg = JSON.parse(raw);
-        if (msg.type === 'points') renderPoints(msg.points || []);
-        if (msg.type === 'userLocation') setUserLocation(msg.latitude, msg.longitude, !!msg.pan);
-        if (msg.type === 'focus') focusOn(msg.latitude, msg.longitude, msg.count);
-      } catch (e) {}
-    };
-
-    document.addEventListener('message', (e) => handleMessage(e.data));
-    window.addEventListener('message', (e) => handleMessage(e.data));
-  </script>
-</body>
-</html>
-`;
 
 const HeatmapScreen = ({ route, navigation }) => {
   const [activeFilter, setActiveFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
+  const [pointCount, setPointCount] = useState(null);
+  const [fetchError, setFetchError] = useState('');
   const [locationError, setLocationError] = useState('');
-  const [webReady, setWebReady] = useState(false);
-  const webRef = useRef(null);
+  const mapRef = useRef(null);
   const filterRef = useRef(activeFilter);
-  const userCoordsRef = useRef(null);
-  const pendingPointsRef = useRef([]);
-  // Stores the hotspot the user tapped on the Safety Stats screen so we can
-  // re-apply the focus once the WebView's Leaflet runtime is ready.
-  const focusRef = useRef(null);
+  filterRef.current = activeFilter;
 
-  // Build the HTML once. DEFAULT_CAMPUS keeps the initial view sensible
-  // before the user's GPS fix arrives.
-  const html = useRef(
-    buildLeafletHtml(DEFAULT_CAMPUS.latitude, DEFAULT_CAMPUS.longitude, MSU_LANDMARKS),
-  ).current;
-
-  useEffect(() => {
-    getUserLocation();
+  const fetchData = useCallback(async ({ silent = true } = {}) => {
+    if (!silent) setLoading(true);
+    try {
+      const result = await getHeatmapData(filterRef.current);
+      const points = result.dataPoints || [];
+      mapRef.current?.post({ type: 'points', points });
+      setPointCount(points.length);
+      setLastUpdated(new Date().toLocaleTimeString());
+      setFetchError('');
+    } catch (error) {
+      // Keep whatever is on the map; tell the user it may be stale.
+      setFetchError(error?.message || 'Could not refresh the heatmap.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => {
-    filterRef.current = activeFilter;
-    fetchData();
-    const intervalId = setInterval(() => fetchData({ silent: true }), REFRESH_INTERVAL_MS);
-    return () => clearInterval(intervalId);
-  }, [activeFilter]);
+  const { refresh } = usePolling(fetchData, REFRESH_INTERVAL_MS);
 
-  // Replay buffered messages once the WebView's JS has booted.
+  // Refetch immediately when the filter changes.
   useEffect(() => {
-    if (!webReady || !webRef.current) return;
-    if (userCoordsRef.current) {
-      postToMap({ type: 'userLocation', ...userCoordsRef.current });
-    }
-    if (pendingPointsRef.current.length > 0) {
-      postToMap({ type: 'points', points: pendingPointsRef.current });
-    }
-    if (focusRef.current) {
-      postToMap({ type: 'focus', ...focusRef.current });
-    }
-  }, [webReady]);
+    fetchData({ silent: false });
+  }, [activeFilter, fetchData]);
 
-  // Pick up incoming focus params from the Safety Stats screen. Buffered in a
-  // ref because the WebView may not be ready yet on first navigation. Cleared
-  // from route state so a back-and-forth doesn't re-focus stale coords.
+  // Hotspot focus from the Safety Stats screen. Cleared from route params so
+  // navigating back and forth doesn't re-focus stale coords.
+  const params = route?.params;
   useEffect(() => {
-    const { focusLat, focusLng, focusCount } = route?.params || {};
+    const { focusLat, focusLng, focusCount } = params || {};
     if (focusLat == null || focusLng == null) return;
-    focusRef.current = {
-      latitude: focusLat,
-      longitude: focusLng,
-      count: focusCount,
-    };
-    if (webReady) postToMap({ type: 'focus', ...focusRef.current });
+    mapRef.current?.post({ type: 'focus', latitude: focusLat, longitude: focusLng, count: focusCount });
     navigation?.setParams?.({ focusLat: undefined, focusLng: undefined, focusCount: undefined });
-  }, [route?.params?.focusLat, route?.params?.focusLng, webReady]);
+  }, [params, navigation]);
 
-  const postToMap = (payload) => {
-    if (!webRef.current) return;
-    const json = JSON.stringify(payload).replace(/'/g, "\\'");
-    webRef.current.injectJavaScript(`
-      (function() {
-        try {
-          const data = '${json}';
-          if (typeof window.handleMessage === 'function') {
-            window.handleMessage(data);
-          } else {
-            const evt = new MessageEvent('message', { data });
-            window.dispatchEvent(evt);
-          }
-        } catch (e) {}
-      })();
-      true;
-    `);
-  };
-
-  const getUserLocation = async ({ pan = false } = {}) => {
+  const getUserLocation = useCallback(async ({ pan = false } = {}) => {
     setLocationError('');
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setLocationError('Location permission denied — tap “Locate Me” after granting in Settings.');
+        setLocationError('Location permission denied — tap “Locate Me” after granting it in Settings.');
         return;
       }
-      // High accuracy gives us a much better fix on campus where Balanced
-      // sometimes returns the cell-tower location (CBD, miles away).
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-      userCoordsRef.current = coords;
-      if (webReady) postToMap({ type: 'userLocation', ...coords, pan });
-    } catch (err) {
+      mapRef.current?.post({
+        type: 'userLocation',
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        pan,
+      });
+    } catch {
       setLocationError('Unable to get location — check GPS is on, then tap “Locate Me”.');
     }
-  };
+  }, []);
 
-  const fetchData = async ({ silent = false } = {}) => {
-    if (!silent) setLoading(true);
-    try {
-      const result = await getHeatmapData(filterRef.current);
-      const realPoints = result.dataPoints || [];
-      // Always keep MSU campus visualised. If no real incident lies inside
-      // the campus bounding box (e.g. backend has only off-campus test data,
-      // or the filter has zero matches on campus), layer the landmark seed
-      // on top so the High/Medium/Low palette is visible at MSU.
-      const hasCampusData = realPoints.some(isInMsuBounds);
-      const points = hasCampusData ? realPoints : [...realPoints, ...msuSeedPoints()];
-      pendingPointsRef.current = points;
-      if (webReady) postToMap({ type: 'points', points });
-      setLastUpdated(new Date().toLocaleTimeString());
-    } catch (error) {
-      if (!silent) {
-        const points = msuSeedPoints();
-        pendingPointsRef.current = points;
-        if (webReady) postToMap({ type: 'points', points });
-        setLastUpdated(new Date().toLocaleTimeString());
-      }
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+  useEffect(() => {
+    getUserLocation();
+  }, [getUserLocation]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -320,40 +108,56 @@ const HeatmapScreen = ({ route, navigation }) => {
       </View>
 
       <View style={styles.mapContainer}>
-        <WebView
-          ref={webRef}
-          originWhitelist={['*']}
-          source={{ html }}
-          style={styles.map}
-          onLoadEnd={() => setWebReady(true)}
-          javaScriptEnabled
-          domStorageEnabled
-          startInLoadingState
-          renderLoading={() => (
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color={COLORS.primary} />
-            </View>
-          )}
+        <LeafletMap
+          ref={mapRef}
+          latitude={DEFAULT_CAMPUS.latitude}
+          longitude={DEFAULT_CAMPUS.longitude}
+          zoom={17}
+          landmarks={MSU_LANDMARKS}
         />
 
         {loading && (
-          <View style={styles.loadingOverlay}>
+          <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="large" color={COLORS.primary} />
           </View>
         )}
 
-        {!!locationError && (
+        {!!fetchError && (
+          <View style={styles.bannerWrap} pointerEvents="box-none">
+            <ErrorState
+              compact
+              title="Heatmap may be out of date"
+              message={fetchError}
+              onRetry={() => fetchData({ silent: false })}
+            />
+          </View>
+        )}
+
+        {!fetchError && !!locationError && (
           <View style={styles.locationBanner}>
             <Text style={styles.locationBannerText}>{locationError}</Text>
           </View>
         )}
 
-        <TouchableOpacity style={styles.locateButton} onPress={() => getUserLocation({ pan: true })}>
+        {!loading && !fetchError && pointCount === 0 && (
+          <View style={styles.emptyBanner} pointerEvents="none">
+            <Text style={styles.emptyBannerText}>
+              No {activeFilter ? FILTERS.find((f) => f.value === activeFilter)?.label.toLowerCase() : ''} hotspots in the last 90 days.
+            </Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={styles.locateButton}
+          onPress={() => getUserLocation({ pan: true })}
+          accessibilityRole="button"
+          accessibilityLabel="Locate me on the map"
+        >
           <Text style={styles.locateButtonText}>Locate Me</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.legendRow}>
+      <View style={styles.legendRow} accessibilityLabel="Legend: red high risk, orange medium risk, green low risk">
         <View style={styles.legendItem}>
           <View style={[styles.legendDot, { backgroundColor: COLORS.severityHigh }]} />
           <Text style={styles.legendText}>High</Text>
@@ -375,6 +179,8 @@ const HeatmapScreen = ({ route, navigation }) => {
             key={f.value}
             style={[styles.filterChip, activeFilter === f.value && styles.filterChipActive]}
             onPress={() => setActiveFilter(f.value)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: activeFilter === f.value }}
           >
             <Text
               style={[
@@ -388,9 +194,11 @@ const HeatmapScreen = ({ route, navigation }) => {
         ))}
       </View>
 
-      <Text style={styles.lastUpdated}>
-        Last updated: {lastUpdated || 'Loading...'} (auto-refresh every 5s)
-      </Text>
+      <TouchableOpacity onPress={refresh} accessibilityRole="button" accessibilityLabel="Refresh heatmap now">
+        <Text style={[styles.lastUpdated, fetchError && { color: COLORS.warning }]}>
+          {lastUpdated ? `Updated ${lastUpdated}` : 'Loading…'} · areas with 2+ reports · tap to refresh
+        </Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 };
@@ -400,13 +208,13 @@ const styles = StyleSheet.create({
   header: { backgroundColor: COLORS.primary, padding: 16, alignItems: 'center' },
   headerTitle: { color: COLORS.white, fontSize: 18, fontWeight: '700' },
   mapContainer: { flex: 1, position: 'relative' },
-  map: { flex: 1, backgroundColor: COLORS.greyLight },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.6)',
+    backgroundColor: 'rgba(255,255,255,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  bannerWrap: { position: 'absolute', top: 4, left: 8, right: 8 },
   locationBanner: {
     position: 'absolute',
     top: 8,
@@ -417,6 +225,12 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   locationBannerText: { color: COLORS.white, fontSize: 12, textAlign: 'center', fontWeight: '500' },
+  emptyBanner: {
+    position: 'absolute', bottom: 12, left: 12, right: 110,
+    backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 8, padding: 10,
+    borderLeftWidth: 4, borderLeftColor: COLORS.success,
+  },
+  emptyBannerText: { color: COLORS.text, fontSize: 12, fontWeight: '600' },
   locateButton: {
     position: 'absolute',
     right: 12,

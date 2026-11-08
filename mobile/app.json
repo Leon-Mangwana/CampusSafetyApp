@@ -14,9 +14,6 @@
     },
     "ios": {
       "supportsTablet": true,
-      "config": {
-        "googleMapsApiKey": "AIzaSyD8B8Fg3Atfy2QMgmafLDgBcPjpUGRD3XM"
-      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Campus Safety uses your location to report incidents accurately and to share your position during SOS alerts.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Campus Safety uses your location to report incidents accurately and to share your position during SOS alerts."
@@ -32,18 +29,20 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
       ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyD8B8Fg3Atfy2QMgmafLDgBcPjpUGRD3XM"
-        }
-      },
       "package": "com.leonmangwana.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-notifications",
+        {
+          "color": "#D32F2F",
+          "defaultChannel": "default"
+        }
+      ]
     ],
     "extra": {
       "eas": {

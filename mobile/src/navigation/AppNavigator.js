@@ -1,7 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Text, View, StyleSheet } from 'react-native';
+import { Text, View, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/theme';
@@ -28,10 +28,16 @@ const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 const TabIcon = ({ label, color }) => (
-  <View style={tabStyles.iconContainer}>
+  <View style={tabStyles.iconContainer} accessibilityElementsHidden importantForAccessibility="no">
     <Text style={[tabStyles.iconText, { color }]}>{label.charAt(0)}</Text>
   </View>
 );
+
+const tabOptions = (label) => ({
+  tabBarLabel: label,
+  tabBarAccessibilityLabel: `${label} tab`,
+  tabBarIcon: ({ color }) => <TabIcon label={label} color={color} />,
+});
 
 const tabStyles = StyleSheet.create({
   iconContainer: {
@@ -80,59 +86,17 @@ function MainTabs() {
       }}
     >
       {isAdmin && (
-        <Tab.Screen
-          name="Dashboard"
-          component={SecurityDashboardScreen}
-          options={{
-            tabBarLabel: 'Dashboard',
-            tabBarIcon: ({ color }) => <TabIcon label="Dashboard" color={color} />,
-          }}
-        />
+        <Tab.Screen name="Dashboard" component={SecurityDashboardScreen} options={tabOptions('Dashboard')} />
       )}
       {isAdmin && (
-        <Tab.Screen
-          name="Reports"
-          component={MonthlyReportScreen}
-          options={{
-            tabBarLabel: 'Reports',
-            tabBarIcon: ({ color }) => <TabIcon label="Reports" color={color} />,
-          }}
-        />
+        <Tab.Screen name="Reports" component={MonthlyReportScreen} options={tabOptions('Reports')} />
       )}
       {!isAdmin && (
-        <Tab.Screen
-          name="Home"
-          component={HomeScreen}
-          options={{
-            tabBarLabel: 'Home',
-            tabBarIcon: ({ color }) => <TabIcon label="Home" color={color} />,
-          }}
-        />
+        <Tab.Screen name="Home" component={HomeScreen} options={tabOptions('Home')} />
       )}
-      <Tab.Screen
-        name="Heatmap"
-        component={HeatmapScreen}
-        options={{
-          tabBarLabel: 'Map',
-          tabBarIcon: ({ color }) => <TabIcon label="Map" color={color} />,
-        }}
-      />
-      <Tab.Screen
-        name="Notifications"
-        component={NotificationsScreen}
-        options={{
-          tabBarLabel: 'Alerts',
-          tabBarIcon: ({ color }) => <TabIcon label="Alerts" color={color} />,
-        }}
-      />
-      <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{
-          tabBarLabel: 'Settings',
-          tabBarIcon: ({ color }) => <TabIcon label="Settings" color={color} />,
-        }}
-      />
+      <Tab.Screen name="Heatmap" component={HeatmapScreen} options={tabOptions('Map')} />
+      <Tab.Screen name="Notifications" component={NotificationsScreen} options={tabOptions('Alerts')} />
+      <Tab.Screen name="Settings" component={SettingsScreen} options={tabOptions('Settings')} />
     </Tab.Navigator>
   );
 }
@@ -173,8 +137,13 @@ export default function AppNavigator() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background }}>
-        <Text style={{ fontSize: 18, color: COLORS.primary, fontWeight: '600' }}>Loading...</Text>
+      <View
+        style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background }}
+        accessibilityRole="progressbar"
+        accessibilityLabel="Loading Campus Safety"
+      >
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={{ marginTop: 12, fontSize: 14, color: COLORS.textSecondary }}>Loading…</Text>
       </View>
     );
   }

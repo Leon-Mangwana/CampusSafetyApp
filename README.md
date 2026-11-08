@@ -1,152 +1,130 @@
 # Campus Safety Application
 
-A cross-platform mobile application for university campus safety, enabling crowdsourced incident reporting, real-time heatmap visualization, SOS alerts, and security officer dashboards.
+A mobile app for Midlands State University (Gweru, Zimbabwe) that lets students report incidents
+anonymously, see a privacy-preserving campus heatmap, and raise an SOS that reaches campus security
+with live location. Security officers get a dashboard, live SOS tracking, push alerts and monthly
+reports.
 
-## Project Structure
+- **Mobile**: Expo SDK 55 / React Native, React Navigation 7, Leaflet (OpenStreetMap) in a WebView
+- **Backend**: Node 20 / Express 5, Firebase Realtime Database + Firebase Auth (Admin SDK), Expo Push
+- **Tooling**: ESLint 9, Prettier, Jest (+ supertest / jest-expo), GitHub Actions
+
+## Repository layout
 
 ```
 CampusSafetyApp/
-├── backend/             # Node.js + Express API server
-│   ├── config/          # Firebase configuration
-│   ├── controllers/     # Route handlers (auth, incidents, SOS, notifications)
-│   ├── middleware/       # Authentication & rate limiting
-│   ├── routes/          # API route definitions
-│   ├── utils/           # Notification helpers, Haversine distance
-│   ├── server.js        # Express app entry point
-│   └── database.rules.json  # Firebase Realtime Database security rules
-├── mobile/              # React Native (Expo) mobile app
-│   ├── src/
-│   │   ├── constants/   # Theme colors, config, incident types
-│   │   ├── context/     # AuthContext (authentication state)
-│   │   ├── navigation/  # React Navigation setup
-│   │   ├── screens/     # All app screens
-│   │   └── services/    # API client layer, Firebase init
-│   └── App.js           # Entry point
-└── README.md
+├── backend/                 # Express API (the only thing that talks to the database)
+│   ├── controllers/         # auth, incidents, SOS, notifications
+│   ├── middleware/          # Firebase ID-token auth, roles, per-user rate limits
+│   ├── routes/
+│   ├── utils/               # validation, logger (PII-redacting), hotspots, push, classifier
+│   ├── scripts/             # create-admin, backfill-claims, purge, check-shared-sync
+│   ├── test/                # Jest + supertest against an in-memory Firebase fake
+│   └── database.rules.json  # client access is fully locked (.read/.write false)
+├── mobile/
+│   ├── src/screens/         # one folder per complex screen (dashboard/, sos/)
+│   ├── src/components/      # LeafletMap, Badge, ErrorState, PlaceLabel, …
+│   ├── src/hooks/           # usePolling (focus + foreground aware), useRelativeTime
+│   ├── src/context/         # AuthContext, DevicePrefsContext (push + location consent)
+│   └── src/services/        # api (timeouts, ApiError), push, presence, firebase
+├── docs/                    # DEPLOYMENT.md, PRIVACY.md
+├── firebase.json            # points `firebase deploy --only database` at the rules file
+└── .github/workflows/ci.yml
 ```
 
-## Features
+## How it works
 
-- **Incident Reporting** — Submit reports with GPS auto-detection
-- **Real-Time Heatmap** — Google Maps overlay showing incident density by severity
-- **SOS Alert System** — Hold-to-activate emergency alert with live GPS tracking to security
-- **Emergency Contacts** — Quick-dial emergency numbers for campus security, police, and support services
-- **Push Notifications** — Real-time alerts for nearby high-severity incidents
-- **Security Dashboard** — Officer view for managing incidents and responding to SOS alerts
-- **Safety Statistics** — Analytics on incident types, severity distribution, and hotspots
-- **Password Reset** — Firebase-powered forgot password flow
-- **Role-Based Access** — Student, staff, security, and admin roles
+- Every write goes through the backend with the Firebase **Admin SDK**. The Realtime Database rules
+  deny all client reads and writes, so the public Firebase web config in the app grants nothing.
+- The API verifies Firebase **ID tokens**. Roles (`student`, `security`, `admin`) come from a custom
+  claim on the token, falling back to `users/{uid}/role`. Self-registration always creates a
+  student; staff are created with `npm run create-admin` or `PUT /api/auth/users/:uid/role`.
+- **Severity** is computed on the server from the description (`utils/severityClassifier.js`); the
+  mobile copy is only a live preview, and CI fails if the two copies drift.
+- **SOS** is never rejected for lack of GPS. The alert carries `locationStatus` (`gps`,
+  `last_known`, `none`) and the dashboard shows a "call the student" fallback.
+- **Privacy**: students only ever receive heatmap/statistics cells of ~55 m that aggregate two or
+  more reports from the last 90 days. Raw incidents are staff-only. Logs are structured JSON with
+  names, phones, emails and coordinates redacted. See [docs/PRIVACY.md](docs/PRIVACY.md).
+- **Rate limits** are per user id (campus Wi-Fi shares one IP): 3 SOS / 5 min, 10 reports / 10 min.
+- **Push** uses the Expo Push Service (`expo-notifications` + `expo-server-sdk`). Android needs an
+  EAS build with FCM credentials; Expo Go on Android cannot receive push.
 
 ## Prerequisites
 
-- Node.js 18+
-- npm or yarn
-- Expo CLI (`npm install -g expo-cli`)
-- Firebase project with Realtime Database and Authentication enabled
-- Google Maps API key (for heatmap)
-- Android Studio / Xcode (for emulator) or Expo Go app on a physical device
+- Node.js 20+
+- A Firebase project with **Realtime Database** and **Email/Password Authentication** enabled
+- Firebase CLI (`npm i -g firebase-tools`) for deploying database rules
+- EAS CLI (`npm i -g eas-cli`) for device builds; Expo Go is fine for most development
 
-## Backend Setup
+## Backend
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   npm install
-   ```
+```bash
+cd backend
+npm install
+cp .env.example .env      # fill in the Firebase service-account values
+npm run dev               # http://localhost:3000/api/health
+```
 
-2. Create a `.env` file based on `.env.example`:
-   ```bash
-   cp .env.example .env
-   ```
+Deploy the database rules once (and after every change):
 
-3. Fill in your Firebase credentials in `.env`:
-   - `FIREBASE_PROJECT_ID` — from Firebase Console > Project Settings
-   - `FIREBASE_PRIVATE_KEY` — from service account JSON (include quotes)
-   - `FIREBASE_CLIENT_EMAIL` — from service account JSON
-   - `FIREBASE_DATABASE_URL` — your Realtime Database URL
-   - `JWT_SECRET` — any strong random string
-   - `GOOGLE_MAPS_API_KEY` — from Google Cloud Console
+```bash
+firebase login
+npm run deploy:rules      # from backend/ or the repo root
+```
 
-4. Start the server:
-   ```bash
-   npm run dev    # development with auto-reload
-   npm start      # production
-   ```
+Create the first admin and a security officer:
 
-   The API runs on `http://localhost:3000` by default.
+```bash
+npm run create-admin -- admin@msu.ac.zw 'StrongPass1' 'Campus Admin'
+npm run create-admin -- officer1@msu.ac.zw 'StrongPass1' 'Officer One' security
+```
 
-## Mobile App Setup
+Other scripts: `npm test`, `npm run lint`, `node scripts/backfill-claims.js` (existing staff),
+`node scripts/purge.js --dry-run` (retention).
 
-1. Navigate to the mobile directory:
-   ```bash
-   cd mobile
-   npm install
-   ```
+## Mobile
 
-2. Update `src/constants/config.js`:
-   - Set `API_BASE_URL` to your backend URL (use your machine's local IP for physical devices, e.g., `http://192.168.1.100:3000/api`)
-   - Add your Firebase web config values
+```bash
+cd mobile
+npm install
+npx expo start
+```
 
-3. Start the Expo development server:
-   ```bash
-   npx expo start
-   ```
+In development the app derives the API host from the Expo dev server, so the backend just needs to
+run on port 3000 on the same machine. For release builds set `EXPO_PUBLIC_API_URL`
+(see `mobile/.env.example`); a production bundle without it refuses to start.
 
-4. Run on a device:
-   - **Android**: Press `a` to open in Android emulator, or scan QR code with Expo Go
-   - **iOS**: Press `i` to open in iOS simulator, or scan QR code with Expo Go
+Before shipping, edit `mobile/src/constants/emergencyNumbers.js`: set the MSU security control room
+number and confirm the national numbers (Police 995, Ambulance 994, Fire 993, General 999).
 
-## Security & Data Protection
+Build for devices:
 
-The backend is designed to meet the security objective defined in Chapter 1
-(AES-256 at rest, TLS 1.3 in transit, ≥100 concurrent users).
+```bash
+eas credentials            # upload the FCM service account once (Android push)
+eas build --profile preview --platform android
+```
 
-### Encryption at rest — AES-256
+## Quality gates
 
-User profiles, incident reports, SOS alerts, and notifications are persisted in
-**Firebase Realtime Database**, which transparently encrypts all stored data
-with AES-256 ([Google Cloud data encryption](https://cloud.google.com/docs/security/encryption/default-encryption)).
-No application-level configuration is required.
+From the repository root:
 
-### Encryption in transit — TLS 1.3
+```bash
+npm run lint          # backend + mobile ESLint
+npm test              # backend Jest (supertest) + mobile Jest (jest-expo)
+npm run check:shared  # classifier copies identical
+npm run check:rules   # firebase.json → rules file, root rules locked
+```
 
-Two hops exist:
+The same checks run in GitHub Actions on every push and pull request.
 
-1. **Mobile → Node API.** Set `HTTPS_KEY_PATH` and `HTTPS_CERT_PATH` in the
-   backend `.env`. `server.js` then serves over HTTPS with `minVersion` and
-   `maxVersion` both pinned to `'TLSv1.3'`. Hit `/api/health` — the response
-   includes `"tls": "enabled"` when the connection was encrypted.
-   In production you may alternatively terminate TLS at an upstream reverse
-   proxy (Cloud Run, nginx, Heroku router); those all enforce TLS 1.2+ and
-   typically negotiate TLS 1.3 automatically.
-2. **Node API → Firebase.** The Firebase Admin SDK negotiates TLS 1.3 against
-   Google's endpoints automatically — no config required.
+## Documentation
 
-HSTS is enabled on every response with a 2-year `max-age`, `includeSubDomains`,
-and `preload`, so browsers upgrade subsequent requests even if a user typed
-`http://`.
-
-### Concurrent user capacity
-
-- Firebase Realtime Database supports 200,000 concurrent connections per
-  database by default — far above the 100-user objective.
-- Express sits behind `express-rate-limit` (100 req / 15 min per IP for
-  general API, stricter limits on `/incidents` and `/sos`), preventing one
-  misbehaving client from starving the others.
-- `app.set('trust proxy', 1)` ensures `req.ip` resolves to the real client
-  IP when behind a reverse proxy, so rate-limiting actually works in
-  production.
-
-## Tech Stack
-
-- **Frontend**: React Native, Expo, React Navigation 7
-- **Backend**: Node.js, Express.js, Firebase Admin SDK
-- **Database**: Firebase Realtime Database
-- **Authentication**: Firebase Authentication
-- **Push Notifications**: Firebase Cloud Messaging
-- **Maps**: react-native-maps (Google Maps)
-- **Location**: expo-location
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): hosting, TLS, environment, cron, release checklist
+- [docs/PRIVACY.md](docs/PRIVACY.md): what is stored, who can see it, retention
+- [USER_MANUAL.md](USER_MANUAL.md): end-user guide for students and security staff
+- [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
-This project is open source and available for academic and educational purposes.
+Open source for academic and educational purposes.

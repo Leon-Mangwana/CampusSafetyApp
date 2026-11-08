@@ -196,8 +196,11 @@ sixty seconds in line with Objective 1.5.1 of the project.
    keywords detected in the description. The student was not required
    to select severity manually.
 5. The application captured the student's GPS location automatically
-   and displayed the coordinates in the **Location** box. The student
-   could tap **Refresh** to update the fix.
+   and confirmed it in the **Location** box together with the fix
+   accuracy (for example "Location captured (accurate to ±8 m)"). The
+   student could tap **Refresh** to update the fix. Exact coordinates
+   were only ever visible to campus security; other students saw
+   incidents aggregated into zones of roughly 55 m.
 6. The student tapped **Submit Report Anonymously**. A confirmation
    dialog appeared and the student was returned to the previous screen.
 
@@ -221,14 +224,26 @@ campus security and to the three registered emergency contacts.
    solid red, displaying **SOS ACTIVE**. The application then
    simultaneously:
    - Recorded the alert on the backend server so it appeared on the
-     Security Dashboard within three seconds.
+     Security Dashboard within three seconds, and sent a push
+     notification to every on-duty security officer.
    - Opened the device's SMS application with a pre-filled message
      containing the student's live Google Maps location, addressed
-     to all three emergency contacts. The student tapped **Send** in
-     the SMS application to dispatch the message.
+     to all registered emergency contacts. The student tapped **Send**
+     in the SMS application to dispatch the message.
 4. While the SOS was active, the student's GPS coordinates were
    transmitted to the backend every three seconds, allowing campus
    security to track the student's movement in real time.
+5. If the phone could not obtain a GPS fix (for example indoors with
+   location services off), the alert was **still sent**. The screen
+   showed "Location unavailable — security will call you", and the
+   Security Dashboard displayed the student's phone number with a
+   **Call Student** button in place of the map link.
+6. A status line under the pulsing indicator confirmed whether security
+   had received the alert ("Security notified"). If the server could
+   not be reached, the line read "Could not reach security" with a
+   **Retry** button, and the **Call Security** / **Call Police**
+   buttons dialled the campus control room and the Zimbabwe Republic
+   Police (995) directly.
 
 *[Insert Figure A.7 here]*
 
@@ -249,18 +264,22 @@ resolved, the student cancelled the alert as follows.
 ### A.5.5 Viewing the Campus Heatmap
 
 The heatmap visualised aggregated incident reports as coloured circles
-overlaid on an interactive campus map.
+overlaid on an interactive OpenStreetMap campus map.
 
 1. The student tapped the **Campus Heatmap** card on the Home screen or
    the **Map** tab in the bottom navigation bar.
 2. The map displayed Low (green), Medium (orange), and High (red)
-   severity circles whose size reflected report concentration.
+   risk circles. To protect reporters, each circle represented a zone
+   of roughly 55 m containing **at least two** reports from the last 90
+   days; a single report was never shown on its own.
 3. The student could filter by incident type using the **Filter** chips
    (All, Theft, Assault, Harassment, Vandalism).
 4. The **Locate Me** button (bottom-right) centred the map on the
    student's current GPS position.
-5. The heatmap auto-refreshed every five seconds while the screen was
-   open.
+5. The heatmap refreshed every thirty seconds while the screen was
+   open, and the "Updated" line could be tapped to refresh immediately.
+   If the server could not be reached, a warning banner said so and
+   the last loaded data remained visible.
 
 *[Insert Figure A.8 here]*
 
@@ -271,9 +290,10 @@ filter chips.
 
 1. The student tapped **Safety Statistics** on the Home screen.
 2. The screen displayed total-incident, resolution-rate, pending, and
-   SOS-handled counts; a horizontal bar chart broken down by incident
-   type; a severity distribution panel; and a ranked **Top Safety
-   Hotspots** list.
+   SOS-handled counts for the last 90 days; a horizontal bar chart
+   broken down by incident type; a severity distribution panel; and a
+   ranked **Top Safety Hotspots** list. Each hotspot was labelled with
+   the nearest place name rather than raw coordinates.
 3. The student tapped any hotspot row to open the heatmap zoomed in on
    the selected location with a red highlight marker.
 
@@ -291,8 +311,15 @@ filter chips.
 2. The screen allowed the student to:
    - Update their **full name** and **phone number**.
    - Edit their three **emergency contacts**.
-   - Toggle **push notifications** on or off.
-   - **Sign out** of the application.
+   - Toggle **Safety alerts** (push notifications) on or off.
+   - Toggle **Share approximate location**. This was **off by
+     default**. When switched on, the application sent the phone's
+     position, rounded to about 10 m, to the server every five minutes
+     while the application was open, so that the student could be
+     warned about high-severity incidents within 500 m. The position
+     was never shown to other students and was deleted after 24 hours.
+   - **Sign out** of the application. Signing out ended the session on
+     the device and stopped push notifications to it.
 
 ---
 
@@ -308,9 +335,16 @@ was active.
 The dashboard displayed:
 - A row of summary statistics: **Total**, **Pending**, **Active SOS**,
   **Resolved**.
-- An **Active SOS Alerts** section listing each open alert.
-- A **Recent Incident Reports** section listing the most recent reports
-  with status and severity badges.
+- Three segments: **SOS** (each open alert), **Incidents** (the most
+  recent reports with status and severity badges and the nearest place
+  name), and **History** (recently closed SOS alerts).
+- A warning banner whenever the server could not be reached, so the
+  officer knew the list might be out of date. The dashboard never
+  displayed sample or placeholder data.
+
+Officers received a high-priority push notification for every new SOS
+and incident; tapping an SOS notification opened the live tracker
+directly.
 
 *[Insert Figure A.9 here]*
 
@@ -321,13 +355,15 @@ active alerts.
 
 Each active SOS alert appeared on the dashboard as a red-bordered card
 displaying the **LIVE** indicator, the time since the last GPS update,
-the user's name, the current GPS coordinates, and three action buttons.
+the user's name, the nearest place name, and three action buttons.
 
 1. The security officer reviewed the **LIVE — Updated X seconds ago**
    line to confirm the alert was still receiving location updates.
 2. The officer tapped **Track Live** to enter the live tracker screen
    (see §A.6.3), or **Open in Maps** to open the location in the
-   device's native maps application for navigation.
+   device's native maps application for navigation. If the student's
+   phone had not provided a location, the card said so and offered a
+   **Call Student** button instead.
 3. Once the officer had reached the student and the incident had been
    contained, the officer tapped **Mark Responded** to close the alert.
    A confirmation dialog appeared, and on confirmation the alert was
@@ -348,9 +384,11 @@ that auto-followed the student's GPS pin in real time.
    time since the last GPS update (e.g. "Updated 2s ago").
 4. The map panned automatically each time a new GPS fix arrived
    (approximately every three seconds).
-5. The officer could tap **Open in Google Maps** to switch to
-   turn-by-turn navigation, or **Mark Responded** to close the alert
-   and return to the dashboard.
+5. The officer could tap **Open in Maps** to switch to turn-by-turn
+   navigation, **Call Student** to phone the student directly, or
+   **Mark Responded** to close the alert and return to the dashboard.
+   Marking an alert as responded also sent the student a notification
+   that security was on the way.
 
 *[Insert Figure A.10 here]*
 
@@ -405,7 +443,8 @@ were documented for end users.
 |---|---|
 | The QR code in Expo Go failed to load the app. | The user verified that the phone and the developer machine were on the same Wi-Fi network. If they were not, the developer was asked to use the **tunnel** option in Expo's developer console. |
 | The map screen displayed a blank grey area. | The user tapped the **Locate Me** button and confirmed that location permission had been granted in the device's settings. |
-| An "SOS Error" alert appeared after triggering an SOS. | The user verified that the device had a stable internet connection and that they were signed in. They then re-triggered the SOS. The backend logged the error for follow-up by the system administrator. |
+| "Could not reach security" appeared after triggering an SOS. | The user tapped **Retry**. If the retry also failed, the user tapped **Call Security** or **Call Police** on the same screen — the SOS screen was designed to work as a dialler even when the server was unreachable. |
+| Push notifications never arrived. | On Android, push notifications did not work inside Expo Go (Expo SDK 53 and later). Testers installed the development or production build. The user also confirmed **Safety alerts** was switched on in Settings and that notification permission had been granted. |
 | The Security Dashboard appeared empty for an admin user. | The administrator pulled the dashboard down to refresh manually. If the empty state persisted, the backend service was either offline or the admin's session token had expired and required a re-sign-in. |
 | The incident report refused to submit despite a complete form. | The user reviewed every field for red error text and addressed each error individually. The most frequent cause was a description shorter than ten characters or written in a non-English language. |
 | The application crashed or froze. | The user closed Expo Go entirely from the device's recent-apps switcher and reopened it, then re-scanned the QR code. |

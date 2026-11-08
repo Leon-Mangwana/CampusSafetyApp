@@ -7,24 +7,42 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "create-admin": "node scripts/create-admin.js",
-    "generate-cert": "node scripts/generate-dev-cert.js"
+    "generate-cert": "node scripts/generate-dev-cert.js",
+    "deploy:rules": "cd .. && firebase deploy --only database",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{js,json,md}\"",
+    "check:shared": "node scripts/check-shared-sync.js",
+    "purge": "node scripts/purge.js",
+    "backfill-claims": "node scripts/backfill-claims.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",
+    "expo-server-sdk": "^3.15.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.2",
     "firebase-admin": "^13.8.0",
-    "helmet": "^8.1.0",
-    "jsonwebtoken": "^9.0.3",
-    "uuid": "^13.0.0"
+    "helmet": "^8.1.0"
   },
   "devDependencies": {
-    "selfsigned": "^5.5.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-n": "^18.5.0",
+    "globals": "^17.14.0",
+    "jest": "^30.5.2",
+    "prettier": "^3.9.10",
+    "selfsigned": "^5.5.0",
+    "supertest": "^7.3.2"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

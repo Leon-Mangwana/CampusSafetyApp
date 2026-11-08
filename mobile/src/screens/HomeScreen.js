@@ -108,7 +108,7 @@ const HomeScreen = ({ navigation }) => {
             activeOpacity={0.85}
           >
             <View style={[styles.resourceBadge, { backgroundColor: '#FFEBEE' }]}>
-              <Text style={[styles.resourceBadgeText, { color: COLORS.danger }]}>911</Text>
+              <Text style={[styles.resourceBadgeText, { color: COLORS.danger }]}>Call</Text>
             </View>
             <Text style={styles.resourceTitle}>Emergency Numbers</Text>
             <Text style={styles.resourceDesc}>Campus security & local services</Text>

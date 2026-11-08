@@ -72,11 +72,20 @@ const LoginScreen = ({ navigation }) => {
       const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
       await AsyncStorage.setItem('userToken', idToken);
 
+      // The profile carries the account role. If we cannot load it we must
+      // not guess — abort the login rather than silently treating the user
+      // as a student (or hiding an officer's dashboard).
       let profile;
       try {
         profile = await getProfile();
-      } catch {
-        profile = null;
+      } catch (profileError) {
+        await fbSignOut(auth);
+        await AsyncStorage.removeItem('userToken');
+        Alert.alert(
+          'Could Not Load Profile',
+          `${profileError?.message || 'The server did not respond.'} Please check your connection and try again.`
+        );
+        return;
       }
 
       const accountRole = profile?.role || 'student';
