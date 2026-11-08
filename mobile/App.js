@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
+import './src/utils/alertPolyfill';
 import { AuthProvider } from './src/context/AuthContext';
 import { DevicePrefsProvider } from './src/context/DevicePrefsContext';
 import AppNavigator from './src/navigation/AppNavigator';
