@@ -39,9 +39,13 @@ const resolveDevHost = () => {
 const buildApiUrl = () => {
   if (!__DEV__) {
     if (!PRODUCTION_API_URL) {
-      throw new Error(
+      // Do not throw here: a module-level throw gives a blank screen with no
+      // explanation. Leave the URL empty; the API client reports a clear
+      // "not configured" error on the first request instead.
+      console.error(
         'EXPO_PUBLIC_API_URL is not set. Configure it in the EAS build profile or a .env file before building a release.',
       );
+      return '';
     }
     return PRODUCTION_API_URL.replace(/\/+$/, '');
   }
