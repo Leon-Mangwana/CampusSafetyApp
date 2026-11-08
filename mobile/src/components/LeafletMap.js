@@ -1,7 +1,12 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { COLORS } from '../constants/theme';
+
+// react-native-webview has no web implementation; in the browser we render the
+// same HTML in an <iframe> instead. Required lazily so the native module is
+// never evaluated on web.
+const isWeb = Platform.OS === 'web';
+const NativeWebView = isWeb ? null : require('react-native-webview').WebView;
 
 // Pinned Leaflet build with Subresource Integrity so a compromised CDN cannot
 // inject script into the WebView. Hashes are for leaflet@1.9.4.
@@ -125,6 +130,7 @@ const buildHtml = ({ latitude, longitude, zoom, landmarks }) => `
     document.addEventListener('message', function (e) { window.handleMessage(e.data); });
     window.addEventListener('message', function (e) { window.handleMessage(e.data); });
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage('ready');
+    else if (window.parent && window.parent !== window) window.parent.postMessage('leaflet-ready', '*');
   </script>
 </body>
 </html>`;
@@ -149,6 +155,10 @@ const LeafletMap = forwardRef(({ latitude, longitude, zoom = 17, landmarks, styl
 
   const send = useCallback((payload) => {
     if (!webRef.current) return;
+    if (isWeb) {
+      webRef.current.contentWindow?.postMessage(JSON.stringify(payload), '*');
+      return;
+    }
     const json = JSON.stringify(payload).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     webRef.current.injectJavaScript(`window.handleMessage('${json}'); true;`);
   }, []);
@@ -172,9 +182,38 @@ const LeafletMap = forwardRef(({ latitude, longitude, zoom = 17, landmarks, styl
 
   useEffect(() => () => { readyRef.current = false; }, []);
 
+  // Web: the iframe signals readiness with a window message.
+  useEffect(() => {
+    if (!isWeb) return undefined;
+    const onMessage = (e) => {
+      if (e.data === 'leaflet-ready' && e.source === webRef.current?.contentWindow) markReady();
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [markReady]);
+
+  if (isWeb) {
+    return (
+      <View style={[styles.container, style]}>
+        <iframe
+          ref={webRef}
+          title="Campus map"
+          srcDoc={htmlRef.current}
+          sandbox="allow-scripts"
+          style={{ border: 0, width: '100%', height: '100%', backgroundColor: COLORS.greyLight }}
+        />
+        {!ready && (
+          <View style={styles.loadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="large" color={COLORS.primary} />
+          </View>
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, style]}>
-      <WebView
+      <NativeWebView
         ref={webRef}
         originWhitelist={['about:*']}
         onShouldStartLoadWithRequest={allowRequest}
