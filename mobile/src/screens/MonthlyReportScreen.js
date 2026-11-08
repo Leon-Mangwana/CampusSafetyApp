@@ -3,15 +3,16 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   SafeAreaView, ActivityIndicator, Alert, Linking, RefreshControl,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { COLORS } from '../constants/theme';
 import { getMonthlyReport } from '../services/api';
+import { usePolling } from '../hooks/usePolling';
+import ErrorState from '../components/ErrorState';
 
-// How often to refetch the report while the screen stays visible. 5 s feels
-// near-live during a demo while still being well within Firebase quotas.
-const REFRESH_INTERVAL_MS = 5000;
+// Monthly totals move slowly. Refresh on focus and every minute while the
+// screen is visible; polling pauses when the tab is hidden (usePolling).
+const REFRESH_INTERVAL_MS = 60000;
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -88,6 +89,7 @@ const MonthlyReportScreen = ({ navigation }) => {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
   // Tracks the time of the most recent successful fetch so the user can see
   // the data is live, not stale.
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -103,20 +105,12 @@ const MonthlyReportScreen = ({ navigation }) => {
       if (requestId !== requestIdRef.current) return; // stale response
       setReport(data);
       setLastUpdated(new Date());
+      setError('');
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
-      // Demo fallback so the UI always has something to show.
-      setReport({
-        monthLabel: `${MONTH_NAMES[month - 1]} ${year}`,
-        periodLabel: `1 ${MONTH_NAMES[month - 1]} ${year} - ${new Date(year, month, 0).getDate()} ${MONTH_NAMES[month - 1]} ${year}`,
-        total: 0,
-        approved: 0,
-        sosAlerts: 0,
-        resolutionRate: 0,
-        categories: [],
-        topHotspot: null,
-        trend: { percent: 0, direction: 'flat', previousTotal: 0 },
-      });
+      // Never show invented numbers: keep the last real report (if any) and
+      // tell the user it could not be refreshed.
+      setError(err?.message || 'Could not load the report.');
     } finally {
       // Always clear the spinner on whichever request is the latest, even
       // if it ran silently — otherwise a silent fetch that supersedes a
@@ -125,21 +119,14 @@ const MonthlyReportScreen = ({ navigation }) => {
     }
   }, [month, year]);
 
-  // Initial fetch + refetch when the user navigates months.
+  // Refetch (with spinner) when the user navigates months.
   useEffect(() => {
     fetchReport();
   }, [fetchReport]);
 
-  // Refresh whenever the screen regains focus (e.g. user submits a new
-  // incident report and navigates back) and poll periodically while visible
-  // so live numbers tick without manual intervention.
-  useFocusEffect(
-    useCallback(() => {
-      fetchReport({ silent: true });
-      const id = setInterval(() => fetchReport({ silent: true }), REFRESH_INTERVAL_MS);
-      return () => clearInterval(id);
-    }, [fetchReport]),
-  );
+  // Silent refresh on focus and periodically while visible.
+  const silentFetch = useCallback(() => fetchReport({ silent: true }), [fetchReport]);
+  usePolling(silentFetch, REFRESH_INTERVAL_MS, { immediate: false });
 
   const onPullRefresh = async () => {
     setRefreshing(true);
@@ -234,6 +221,10 @@ const MonthlyReportScreen = ({ navigation }) => {
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
+      ) : !report ? (
+        <View style={styles.content}>
+          <ErrorState title="Could not load the monthly report" message={error} onRetry={() => fetchReport()} />
+        </View>
       ) : (
         <ScrollView
           contentContainerStyle={styles.content}
@@ -246,11 +237,14 @@ const MonthlyReportScreen = ({ navigation }) => {
             />
           }
         >
+          {!!error && (
+            <ErrorState compact title="Showing last loaded figures" message={error} onRetry={() => fetchReport()} />
+          )}
           <Text style={styles.periodSub}>Period: {report.periodLabel}</Text>
           <View style={styles.liveRow}>
             {lastUpdated && (
               <Text style={styles.lastUpdated}>
-                Live · updated {lastUpdated.toLocaleTimeString()} (auto-refresh 5s)
+                Updated {lastUpdated.toLocaleTimeString()} · auto-refresh every minute
               </Text>
             )}
             <TouchableOpacity
