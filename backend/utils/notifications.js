@@ -1,32 +1,89 @@
-const { admin, db } = require('../config/firebase');
-const { v4: uuidv4 } = require('uuid');
+const { Expo } = require('expo-server-sdk');
+const { db } = require('../config/firebase');
+const { randomUUID } = require('crypto');
+const log = require('./logger');
+
+const expo = new Expo();
+
+// Presence records older than this are ignored for nearby alerts.
+const PRESENCE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 /**
- * Send push notification via Firebase Cloud Messaging
+ * Remove a dead push token from whichever user owns it.
+ */
+const clearPushToken = async (token) => {
+  try {
+    const snapshot = await db
+      .ref('users')
+      .orderByChild('pushToken')
+      .equalTo(token)
+      .once('value');
+    const updates = {};
+    snapshot.forEach((child) => {
+      updates[`users/${child.key}/pushToken`] = null;
+    });
+    if (Object.keys(updates).length > 0) await db.ref().update(updates);
+  } catch (err) {
+    log.error('push.clear_token_failed', { err });
+  }
+};
+
+/**
+ * Send a push notification through the Expo Push Service.
+ * Invalid tokens are skipped; tokens Expo reports as unregistered are removed
+ * from the database so we stop sending to them.
+ *
+ * @returns {Promise<{sent: number, failed: number}>}
  */
 const sendPushNotification = async (recipientTokens, title, body, data = {}) => {
-  if (!recipientTokens || recipientTokens.length === 0) return;
+  const unique = [...new Set((recipientTokens || []).filter(Boolean))];
+  const valid = unique.filter((t) => Expo.isExpoPushToken(t));
+  const invalid = unique.length - valid.length;
+  if (invalid > 0) log.warn('push.invalid_tokens_skipped', { count: invalid });
+  if (valid.length === 0) return { sent: 0, failed: invalid };
 
-  const message = {
-    notification: { title, body },
+  const isSos = data.type === 'sos';
+  const messages = valid.map((to) => ({
+    to,
+    title,
+    body,
+    sound: 'default',
+    priority: 'high',
+    channelId: isSos ? 'sos' : 'default',
     data: { ...data, timestamp: new Date().toISOString() },
-  };
+  }));
 
-  try {
-    const promises = recipientTokens.map((token) =>
-      admin.messaging().send({ ...message, token })
-    );
-    await Promise.allSettled(promises);
-  } catch (error) {
-    console.error('Push notification error:', error.message);
+  let sent = 0;
+  let failed = invalid;
+  for (const chunk of expo.chunkPushNotifications(messages)) {
+    try {
+      const tickets = await expo.sendPushNotificationsAsync(chunk);
+      tickets.forEach((ticket, i) => {
+        if (ticket.status === 'ok') {
+          sent++;
+          return;
+        }
+        failed++;
+        const errorCode = ticket.details && ticket.details.error;
+        log.error('push.ticket_error', { code: errorCode, message: ticket.message });
+        if (errorCode === 'DeviceNotRegistered') {
+          clearPushToken(chunk[i].to);
+        }
+      });
+    } catch (error) {
+      failed += chunk.length;
+      log.error('push.chunk_failed', { err: error });
+    }
   }
+  log.info('push.sent', { sent, failed, type: data.type });
+  return { sent, failed };
 };
 
 /**
  * Store notification record in database
  */
 const storeNotification = async (recipientId, incidentId, type, message) => {
-  const notificationId = uuidv4();
+  const notificationId = randomUUID();
   const notification = {
     notificationId,
     recipientId,
@@ -42,27 +99,37 @@ const storeNotification = async (recipientId, incidentId, type, message) => {
 };
 
 /**
- * Find users within a radius (in meters) of given coordinates
- * Simplified: queries all users and filters by distance
+ * Find users whose recent opt-in presence record lies within `radiusMeters`
+ * of a point. Reads the `presence` node (rounded coordinates, no personal
+ * data) filtered to the last two hours, then fetches push tokens only for
+ * the matching users.
+ *
+ * @returns {Promise<Array<{uid: string, pushToken: string|null}>>}
  */
 const findUsersWithinRadius = async (latitude, longitude, radiusMeters = 500) => {
-  const usersSnapshot = await db.ref('users').once('value');
-  const users = usersSnapshot.val() || {};
-  const nearbyUsers = [];
+  const since = new Date(Date.now() - PRESENCE_MAX_AGE_MS).toISOString();
+  const snapshot = await db
+    .ref('presence')
+    .orderByChild('updatedAt')
+    .startAt(since)
+    .once('value');
 
-  for (const [uid, user] of Object.entries(users)) {
-    if (user.lastLatitude && user.lastLongitude) {
-      const distance = calculateDistance(
-        latitude, longitude,
-        user.lastLatitude, user.lastLongitude
-      );
-      if (distance <= radiusMeters) {
-        nearbyUsers.push({ uid, ...user });
-      }
+  const nearbyUids = [];
+  snapshot.forEach((child) => {
+    const p = child.val() || {};
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return;
+    if (calculateDistance(latitude, longitude, p.lat, p.lng) <= radiusMeters) {
+      nearbyUids.push(child.key);
     }
-  }
+  });
 
-  return nearbyUsers;
+  const tokens = await Promise.all(
+    nearbyUids.map(async (uid) => {
+      const snap = await db.ref(`users/${uid}/pushToken`).once('value');
+      return { uid, pushToken: snap.val() || null };
+    })
+  );
+  return tokens;
 };
 
 /**
@@ -85,4 +152,6 @@ module.exports = {
   storeNotification,
   findUsersWithinRadius,
   calculateDistance,
+  clearPushToken,
+  PRESENCE_MAX_AGE_MS,
 };
