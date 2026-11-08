@@ -55,6 +55,9 @@ const parseBody = async (response) => {
 };
 
 const apiRequest = async (endpoint, options = {}) => {
+  if (!API_BASE_URL) {
+    throw new ApiError('This build has no API URL configured. Contact the administrator.', { code: 'config' });
+  }
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
   const token = await getAuthToken();
   const headers = {
